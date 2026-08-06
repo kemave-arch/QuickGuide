@@ -49,7 +49,7 @@
 
   <style>
     body {
-      background-color: #fdfdfd;
+      background-color: #e2e8f0;
       color: #0f172a;
       font-family: 'Inter', sans-serif;
       -webkit-font-smoothing: antialiased;
@@ -94,7 +94,6 @@
       transform: translate(3px, 3px) scale(0.8);
     }
 
-    /* Corner Highlight Activation on Hover */
     .ak-panel:hover .ak-corner-tl,
     .ak-panel:hover .ak-corner-br {
       opacity: 1;
@@ -140,12 +139,20 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState } = React;
+    const { useState, useEffect } = React;
 
-    // PUBLIC SHARED GOOGLE DRIVE MANUAL LINK
+    // Standardized Siemens Device Tag
+    const DeviceTag = ({ code }) => (
+      <span className="text-xs font-mono font-bold bg-slate-800 text-white px-2.5 py-0.5 rounded border border-slate-600 inline-flex items-center gap-1.5 shadow-sm">
+        <CpuIcon className="w-3.5 h-3.5 text-ak-cyan" />
+        {code}
+      </span>
+    );
+
+    // Manual Drive Link
     const GDRIVE_MANUAL_URL = "https://drive.google.com/file/d/1ne6oy1_Kdz6Xtl34zDyCST5Pd2gBAf6w/view?usp=drive_link";
 
-    // --- REUSABLE VECTOR REACT UI SYMBOLS (SVG ICONS) ---
+    // SVG Icons
     const ShieldCheckIcon = ({ className = "w-4 h-4" }) => (
       <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
         <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
@@ -242,7 +249,28 @@
       </svg>
     );
 
-    // --- VERIFIED MANUAL DATA & ACCURATE CITATIONS WITH DIAGNOSTIC ANALYSIS ---
+    const PlayIcon = ({ className = "w-4 h-4" }) => (
+      <svg className={className} fill="currentColor" viewBox="0 0 24 24">
+        <path d="M8 5v14l11-7z" />
+      </svg>
+    );
+
+    // Dynamic Helper for Short-Circuit Test (SCT) Rules
+    function getSctRuleText(appKey, supplyMode) {
+      if (supplyMode === 'external') {
+        return 'Disabled (External 24V Active)';
+      }
+      switch (appKey) {
+        case 'app1': return 'Optional (Internal VSn)';
+        case 'app2': return 'Optional (Disable/Enable)';
+        case 'app31': return 'MUST be Enabled (≥1 Internal VSn)';
+        case 'app32': return 'Optional (Non-Equivalent Contact Break)';
+        case 'appMat': return 'Mandatory Fixed Pattern (Internal VSn)';
+        default: return 'Disabled';
+      }
+    }
+
+    // Verified Manual Data & Official Siemens Fault Codes (Table 7-5, p. 116–120)
     const APP_DATA = {
       app1: {
         id: 'app1',
@@ -256,47 +284,69 @@
         figInt: 'Figure 4-4 (Internal VSn)',
         figExt: 'Figure 4-4 (External 24V)',
         tableRef: 'Table 4-7',
-        scRule: 'Short-Circuit Test Optional (Internal VSn)',
         scTooltip: 'In 1oo1 evaluation, enabling short-circuit test sends off-pulses to detect 24V shorts on single-channel wiring. However, Cat.4 cannot be achieved with 1 channel.',
         allowExt: true,
         warning: 'WARNING: To achieve SIL3/Cat.3/PLd, you must use a qualified sensor, route cables cross-circuit proof, and apply positive opening operation principles (Section 4.3.1).',
-        params: { eval: '1oo1 evaluation', supply: 'Sensor supply n / External', scTest: 'Disable / Enable' },
+        subWarnings: [
+          { title: 'Qualified Sensor Requirement', text: 'To achieve SIL3/Cat.3/PLd with single-channel wiring, the sensor itself must meet safety standards (IEC 60947-5-1 positive opening).' },
+          { title: 'Cross-Circuit Proof Wiring', text: 'Cables must be laid with physical separation or armoring to prevent cross-talk or short circuits between conductors.' },
+          { title: 'Operational Repair Time Limit', text: 'Faults must be eliminated within 100 hours. If repair is not possible, deactivate the module or disconnect power (Section 3.2, p. 17).' }
+        ],
+        params: { eval: '1oo1 evaluation', supply: 'VSn Internal / External 24V' },
         faults: [
           { 
             name: 'Short-circuit of input with other channels / supplies', intOn: 'Yes*', intOff: 'No', ext: 'No',
+            faultType: 'short_other',
+            diagCode: '0x31CH / 0x314H', diagMsg: 'Input shorted to P / Discrepancy error',
             cause: 'Cable pinching, crushed field wiring conduit, or wrong cross-terminal wiring between input channels.',
             consequence: 'Crosstalk forces input HIGH (1). Test pulses detect pulse corruption and passivate channel.',
-            example: 'E.g., An operator presses the E-stop button, but crushed cable wiring feeds +24V from an adjacent line. Test pulses catch this mismatch and lock the circuit safely.'
+            safetyOutcome: 'CH1 (DI0) passivated to 0V. Safety Program forces process value 0. Safety actuators de-energize immediately.',
+            example: 'E.g., An operator presses E-stop, but crushed cable feeds 24V from an adjacent line. Test pulses catch the mismatch, passivating DI0 to stop machine motion.'
           },
           { 
             name: 'Short-circuit of input with associated sensor supply', intOn: 'No', intOff: 'No', ext: 'No',
+            faultType: 'short_vsn_Lplus',
+            diagCode: '0x31CH', diagMsg: 'Input shorted to P (Upon Demand)',
             cause: 'Direct bridge between DIn and VSn inside switch housing or cable harness.',
             consequence: 'Input remains permanently HIGH (+24V). Opening the switch fails to drop signal.',
-            example: 'E.g., Opening an interlock guard door fails to cut power because DIn is shorted directly to its own power feed.'
+            safetyOutcome: 'CH1 (DI0) stays HIGH (1). Safety function cannot trigger on single switch actuation until manual inspection.',
+            example: 'E.g., Opening an interlock guard door fails to cut power because DI0 is shorted directly to its own power feed.'
           },
           { 
             name: 'Short-circuit with L+ to DIn', intOn: 'Yes', intOff: 'No', ext: 'No',
+            faultType: 'short_Lplus',
+            diagCode: '0x31CH', diagMsg: 'Input shorted to P',
             cause: 'Insulation breakdown shorting main +24V DC bus line directly into terminal DIn.',
             consequence: 'Input forced permanently HIGH (1). Test pulses detect missing low pulses and passivate channel.',
-            example: 'E.g., Main power line shorts into DIn. PLC test generator overrides the short and shuts down the zone.'
+            safetyOutcome: 'CH1 (DI0) passivated (0V forced in PII). PLC de-energizes safety outputs to prevent dangerous motion.',
+            example: 'E.g., Main power line shorts into DI0. PLC test generator overrides the short and shuts down the zone.'
           },
           { 
             name: 'Short-circuit with M (0V) to DIn', intOn: 'Yes*', intOff: 'Yes*', ext: 'No',
+            faultType: 'short_M',
+            diagCode: 'Process Signal 0', diagMsg: 'Read Signal Drops to 0V / Trip',
             cause: 'Field cable crushed against grounded machine frame or shorted to 0V return line.',
             consequence: 'Input drops permanently LOW (0). Triggers an immediate safe-state trip.',
+            safetyOutcome: 'CH1 (DI0) drops to 0V. Safety actuators de-energized immediately. Safe state achieved.',
             example: 'E.g., A conveyor motor shuts down mid-cycle because a pinched sensor wire shorts against the metal frame.'
           },
           { 
             name: 'Short-circuit with L+ to VSn', intOn: 'Yes', intOff: 'No', ext: 'N/A',
+            faultType: 'short_vsn_Lplus',
+            diagCode: '0x306H', diagMsg: 'Internal sensor supply short-circuit to P',
             cause: 'External +24V line touching internal sensor supply terminal VSn.',
             consequence: 'Overrides internal VSn test pulses. PLC detects missing low pulses during diagnostic cycle and passivates VSn group.',
-            example: 'E.g., Sensor supply VSn gets bridged to raw 24V. Diagnostic cycle trips and locks out VSn outputs.'
+            safetyOutcome: 'VS0 group passivated (0V). All dependent channels forced to 0. Safe shutdown initiated.',
+            example: 'E.g., Sensor supply VS0 gets bridged to raw 24V. Diagnostic cycle trips and locks out VS0 outputs.'
           },
           { 
             name: 'Short-circuit with M (0V) to VSn or defective', intOn: 'Yes', intOff: 'Yes', ext: 'N/A',
+            faultType: 'short_vsn_M',
+            diagCode: '0x307H', diagMsg: 'Overload or internal sensor supply short-circuit to ground',
             cause: 'Sensor supply grounded to frame or internal PTC electronic fuse overload (>300mA).',
             consequence: 'Internal PTC thermal fuse trips; assigned channels passivate to 0.',
-            example: 'E.g., A shorted optical sensor draws too much current, causing VSn PTC to trip and safely de-energize the zone.'
+            safetyOutcome: 'PTC fuse trips -> VS0 voltage drops to 0V -> Dependent channels passivated -> Machine stops.',
+            example: 'E.g., A shorted optical sensor draws too much current, causing VS0 PTC to trip and safely de-energize the zone.'
           }
         ]
       },
@@ -312,52 +362,77 @@
         figInt: 'Figure 4-5 / 4-6 (Internal Supply)',
         figExt: 'Figure 4-5 / 4-6 (External 24V)',
         tableRef: 'Table 4-9',
-        scRule: 'Short-Circuit Test MUST be Disabled',
-        scTooltip: 'Short-circuit test pulses are turned OFF here. Short circuits are detected upon demand via discrepancy timing when the switch is physically pressed (Category 3).',
+        scTooltip: 'Short-circuit test pulses default to OFF here. Short circuits are detected upon demand via discrepancy timing when the switch is physically pressed (Category 3).',
         allowExt: true,
         warning: 'WARNING: To achieve Cat.3 / PLe without test pulses, faults are detected upon demand via discrepancy timing when switch is pressed (Section 4.3.2).',
-        params: { eval: '1oo2 evaluation, equivalent', supply: 'Sensor supply n / External', scTest: 'Disable' },
+        subWarnings: [
+          { title: 'Discrepancy Time Setting', text: 'Discrepancy time must be parameterized greater than input delay. Short discrepancy time prevents false trips while ensuring prompt passivation.' },
+          { title: 'Demand-Based Detection', text: 'Without active short-circuit test pulses, cross-channel short circuits are only recognized upon demand (when the sensor is actuated).' },
+          { title: 'Sensor Qualification', text: 'Requires dual-channel safety sensors with proven reliability and mechanical opening guarantee.' }
+        ],
+        params: { eval: '1oo2 evaluation, equivalent', supply: 'VSn Internal / External 24V' },
         faults: [
           { 
-            name: 'Short-circuit within the channel pair', intOn: 'N/A (Test Off)', intOff: 'No', ext: 'No',
-            cause: 'Crushed dual-channel cable shorting Channel 1 (DIn) wire to Channel 2 (DIn+4) wire.',
-            consequence: 'Shorting equivalent (NC/NC) channels produces no voltage difference. Fault detected only when switch is actuated.',
-            example: 'E.g., A pinched cable bridges both NC wires. While idle, the PLC sees 24V/24V. Pressing E-stop opens one contact, creating a mismatch that trips discrepancy.'
+            name: 'Short-circuit within the channel pair', intOn: 'N/A', intOff: 'No', ext: 'No',
+            faultType: 'short_pair',
+            diagCode: '0x314H (0x303H)', diagMsg: 'Discrepancy failure, channel status 1/1',
+            cause: 'Crushed dual-channel cable shorting CH1 (DI0) wire to CH2 (DI4) wire.',
+            consequence: 'Shorting equivalent (NC/NC) channels produces no voltage difference while idle. Detected upon demand when switch opens.',
+            safetyOutcome: 'CH1 (DI0) opens (0V) while CH2 (DI4) stays at 24V -> Discrepancy timer expires -> Channel pair passivated.',
+            example: 'E.g., A pinched cable bridges both NC wires. While idle, PLC sees 24V/24V. Pressing E-stop opens one contact, creating a mismatch that trips discrepancy.'
           },
           { 
-            name: 'Short-circuit with other channels / supplies', intOn: 'N/A (Test Off)', intOff: 'Yes*', ext: 'Yes*',
-            cause: 'Foreign +24V supply shorted into one channel of the equivalent pair.',
-            consequence: 'One channel stays HIGH while partner drops LOW upon actuation. Discrepancy timer expires and passivates channel pair.',
+            name: 'Short-circuit with other channels / supplies', intOn: 'N/A', intOff: 'Yes*', ext: 'Yes*',
+            faultType: 'short_other',
+            diagCode: '0x314H (0x302H)', diagMsg: 'Discrepancy error (Channel status 1/0)',
+            cause: 'Foreign +24V supply shorted into CH1 of the equivalent pair.',
+            consequence: 'CH1 stays HIGH (1) while CH2 drops LOW (0) upon switch actuation. Discrepancy timer expires.',
+            safetyOutcome: 'Discrepancy timer expires -> Channel pair (DI0/DI4) passivated -> Safety outputs de-energize.',
             example: 'E.g., Actuating an E-stop button opens Ch1, but Ch2 stays energized due to short circuit. Discrepancy timer trips and prevents machine restart.'
           },
           { 
-            name: 'Short-circuit with L+ to DIn', intOn: 'N/A (Test Off)', intOff: 'Yes*', ext: 'Yes*',
-            cause: 'External 24V shorted to one input terminal of equivalent pair.',
-            consequence: 'Input stays HIGH (1) when switch opens. Partner channel opening (0) creates channel mismatch.',
+            name: 'Short-circuit with L+ to DIn', intOn: 'N/A', intOff: 'Yes*', ext: 'Yes*',
+            faultType: 'short_Lplus',
+            diagCode: '0x314H (0x302H)', diagMsg: 'Discrepancy error',
+            cause: 'External 24V shorted to terminal DI0 of equivalent pair.',
+            consequence: 'CH1 (DI0) stays HIGH (1) when switch opens. CH2 (DI4) opening (0) creates channel mismatch.',
+            safetyOutcome: '1/0 channel mismatch -> Discrepancy passivation -> Safety outputs forced to 0.',
             example: 'E.g., Pressing E-stop opens both contacts, but Ch1 remains forced HIGH by short circuit. Mismatch causes discrepancy trip.'
           },
           { 
-            name: 'Short-circuit with M (0V) to DIn', intOn: 'N/A (Test Off)', intOff: 'Yes*', ext: 'Yes*',
-            cause: 'One channel wire shorted to 0V ground frame.',
-            consequence: 'Affected input drops to 0 immediately. Mismatch between channels triggers discrepancy fault.',
+            name: 'Short-circuit with M (0V) to DIn', intOn: 'N/A', intOff: 'Yes*', ext: 'Yes*',
+            faultType: 'short_M',
+            diagCode: '0x314H (0x301H)', diagMsg: 'Discrepancy failure, channel status 0/1',
+            cause: 'CH1 (DI0) signal wire shorted to 0V ground frame.',
+            consequence: 'CH1 (DI0) drops to 0 immediately while CH2 (DI4) stays at 24V.',
+            safetyOutcome: '0/1 channel mismatch -> Discrepancy timer expires -> Channel pair passivated immediately.',
             example: 'E.g., Ch1 wire shorts to ground frame (0V) while Ch2 remains HIGH (24V). Discrepancy timer trips and halts machine.'
           },
           { 
-            name: 'Discrepancy error', intOn: 'N/A (Test Off)', intOff: 'Yes', ext: 'Yes',
+            name: 'Discrepancy error', intOn: 'N/A', intOff: 'Yes', ext: 'Yes',
+            faultType: 'discrepancy',
+            diagCode: '0x314H', diagMsg: 'Discrepancy error',
             cause: 'One switch contact welded/stuck, loose terminal screw, or contact bounce exceeding set discrepancy time.',
-            consequence: 'Inputs disagree (1/0) longer than configured discrepancy time; passivates pair and blocks restart.',
+            consequence: 'Inputs disagree (1/0) longer than configured discrepancy time.',
+            safetyOutcome: 'Channel pair (DI0/DI4) passivated -> Process value 0 forced -> System locks out restart.',
             example: 'E.g., One mechanical contact on a safety gate switch sticks closed while the other opens. PLC passivates the zone.'
           },
           { 
-            name: 'Short-circuit with L+ to VSn', intOn: 'N/A (Test Off)', intOff: 'No', ext: 'N/A',
-            cause: 'External +24V line shorted to internal VSn terminal.',
+            name: 'Short-circuit with L+ to VSn', intOn: 'N/A', intOff: 'No', ext: 'N/A',
+            faultType: 'short_vsn_Lplus',
+            diagCode: '0x314H (Demand)', diagMsg: 'Discrepancy error upon demand',
+            cause: 'External +24V line shorted to internal VS0 terminal.',
             consequence: 'Without test pulses active, static 24V override produces no immediate diagnostic trip while idle.',
+            safetyOutcome: 'Detected upon safety demand when switch opens -> Channel pair passivated.',
             example: 'E.g., Raw 24V connects to VSn. Safety inputs continue reading static 24V until discrepancy occurs on demand.'
           },
           { 
-            name: 'Short-circuit with M (0V) to VSn or defective', intOn: 'N/A (Test Off)', intOff: 'Yes', ext: 'N/A',
-            cause: 'VSn supply grounded or overload on internal PTC fuse.',
-            consequence: 'PTC trips; voltage drops to 0V on both channels, forcing safety function into safe state (0).',
+            name: 'Short-circuit with M (0V) to VSn or defective', intOn: 'N/A', intOff: 'Yes', ext: 'N/A',
+            faultType: 'short_vsn_M',
+            diagCode: '0x307H', diagMsg: 'Overload or internal sensor supply short-circuit to ground',
+            cause: 'VS0 supply grounded or overload on internal PTC fuse.',
+            consequence: 'PTC trips; supply drops to 0V, bringing both CH1 (DI0) and CH2 (DI4) to 0V.',
+            safetyOutcome: 'Supply voltage drops to 0V -> Process values read 0 -> Immediate safe stop.',
             example: 'E.g., VSn line shorts to ground, dropping supply to 0V. Safety PLC safely interprets loss of voltage as a stop demand.'
           }
         ]
@@ -374,115 +449,165 @@
         figInt: 'Figure 4-7 / 4-8 (Dual Internal VSn)',
         figExt: 'Figure 4-7 / 4-8 (Internal Ch0 + External Ch4)',
         tableRef: 'Table 4-11',
-        scRule: 'MUST be Enabled on ≥1 Internal VSn Channel',
         scTooltip: 'Active test pulses dynamically switch off VSn voltage for <1ms to catch pinched wires immediately while machine is idle. Mandatory for Cat.4 with equivalent contacts.',
         allowExt: true,
         warning: 'WARNING: To achieve Cat.4 / PLe with equivalent contacts, at least one channel MUST be supplied internally with short-circuit test ENABLED (Section 4.3.3.1).',
-        params: { eval: '1oo2 evaluation, equivalent', supply: 'Sensor supply n (at least 1 ch)', scTest: 'Enable (Internal channel)' },
+        subWarnings: [
+          { title: 'Internal Sensor Supply Rule', text: 'At least one channel of the pair must be powered via an internal VSn output with Short-Circuit Test ENABLED.' },
+          { title: 'Category 4 Cable Installation', text: 'Field wiring between sensors and automation system must be installed according to state-of-the-art standards to prevent physical cross-talk.' },
+          { title: 'Immediate Idle Fault Detection', text: 'Test pulses detect pinched or shorted channel wires instantly while idle, de-energizing output before machine motion starts.' }
+        ],
+        params: { eval: '1oo2 evaluation, equivalent', supply: 'VSn Internal (at least 1 ch)' },
         faults: [
           { 
             name: 'Short-circuit within the channel pair', intOn: 'Yes*', intOff: 'N/A', ext: 'Yes*',
-            cause: 'Channel 1 (DIn) wire touching Channel 2 (DIn+4) wire in a crushed cable.',
-            consequence: 'Staggered clock pulses on VSn0 vs VSn4 clash; cross-channel pulse read triggers instant Cat 4 trip while idle.',
-            example: 'E.g., A heavy forklift runs over a cable tray, shorting Ch1 and Ch2 wires together. The PLC detects cross-pulses immediately while idle and passivates.'
+            faultType: 'short_pair',
+            diagCode: '0x314H / 0x31CH', diagMsg: 'Discrepancy error / Input shorted to P',
+            cause: 'CH1 (DI0) wire touching CH2 (DI4) wire in a crushed cable.',
+            consequence: 'Staggered clock pulses on VS0 vs VS4 clash; cross-channel pulse read triggers instant Cat 4 trip while idle.',
+            safetyOutcome: 'Pulse pattern clash detected while idle -> Channel pair passivated immediately -> Machine motion blocked.',
+            example: 'E.g., A heavy forklift runs over a cable tray, shorting Ch1 and Ch2 wires together. PLC detects cross-pulses immediately while idle and passivates.'
           },
           { 
             name: 'Short-circuit with other channels / supplies', intOn: 'Yes*', intOff: 'N/A', ext: 'Yes*',
+            faultType: 'short_other',
+            diagCode: '0x31CH', diagMsg: 'Input shorted to P',
             cause: 'Crosstalk or wire short to another sensor supply loop.',
             consequence: 'Corrupted clock pulse pattern detected during diagnostic cycle; passivates affected channels immediately.',
-            example: 'E.g., VSn0 signal bleeds into adjacent VSn1 line. Clock pattern mismatch causes immediate channel passivation.'
+            safetyOutcome: 'Test pulse pattern corrupted -> Affected channels passivated immediately.',
+            example: 'E.g., VS0 signal bleeds into adjacent VS1 line. Clock pattern mismatch causes immediate channel passivation.'
           },
           { 
             name: 'Short-circuit with L+ to DIn', intOn: 'Yes', intOff: 'N/A', ext: 'Yes*',
-            cause: 'Direct 24V short to input terminal DIn.',
+            faultType: 'short_Lplus',
+            diagCode: '0x31CH', diagMsg: 'Input shorted to P',
+            cause: 'Direct 24V short to input terminal DI0.',
             consequence: 'Overrides off-pulses from test generator. PLC expects low pulse but reads static HIGH; passivates channel.',
-            example: 'E.g., A bare 24V wire touches DIn terminal. The PLC test generator expects a 0.5ms low pulse, detects static 24V, and trips.'
+            safetyOutcome: 'Missing off-pulse detected -> CH1 (DI0) passivated -> Safety outputs de-energized.',
+            example: 'E.g., Bare 24V wire touches DI0 terminal. PLC test generator expects a 0.5ms low pulse, detects static 24V, and trips.'
           },
           { 
             name: 'Short-circuit with M (0V) to DIn', intOn: 'Yes*', intOff: 'N/A', ext: 'Yes*',
+            faultType: 'short_M',
+            diagCode: '0x314H (0x301H)', diagMsg: 'Discrepancy failure, channel status 0/1',
             cause: 'Input cable shorted to grounded cabinet frame.',
-            consequence: 'Input drops to 0V continuously. Mismatch with partner channel triggers discrepancy fault.',
+            consequence: 'CH1 (DI0) drops to 0V continuously. Mismatch with CH2 (DI4) triggers discrepancy fault.',
+            safetyOutcome: 'CH1 forced to 0V -> Discrepancy timer expires -> Channel pair passivated -> Safe stop.',
             example: 'E.g., Signal wire insulation wears through against metal panel frame, dropping Ch1 to 0V and causing a safe trip.'
           },
           { 
             name: 'Discrepancy error', intOn: 'Yes', intOff: 'N/A', ext: 'Yes',
-            cause: 'Contact welding/sticking on one channel or open wire circuit.',
+            faultType: 'discrepancy',
+            diagCode: '0x314H', diagMsg: 'Discrepancy error',
+            cause: 'Contact welding/sticking on CH1 (DI0) or open wire circuit.',
             consequence: 'Inputs disagree (1/0) longer than discrepancy time; passivates pair and prevents machine start.',
+            safetyOutcome: 'Discrepancy time exceeded -> Channel pair passivated -> Prevents actuator restart.',
             example: 'E.g., Contact 1 on an E-stop opens, but Contact 2 remains welded closed. PLC passivates the zone.'
           },
           { 
             name: 'Short-circuit with L+ to VSn', intOn: 'Yes', intOff: 'N/A', ext: 'N/A',
-            cause: 'External +24V line touching internal VSn terminal.',
-            consequence: 'Suppresses VSn test pulses. PLC detects missing low pulses and passivates VSn group.',
-            example: 'E.g., VSn terminal accidentally wired to raw 24V DC bus. Diagnostic pulse monitoring detects missing off-pulse and trips.'
+            faultType: 'short_vsn_Lplus',
+            diagCode: '0x306H', diagMsg: 'Internal sensor supply short-circuit to P',
+            cause: 'External +24V line touching internal VS0 terminal.',
+            consequence: 'Suppresses VS0 test pulses. PLC detects missing low pulses and passivates VS0 group.',
+            safetyOutcome: 'VS0 test pulses suppressed -> Diagnostic trip -> Passivates VS0 channel group.',
+            example: 'E.g., VS0 terminal accidentally wired to raw 24V DC bus. Diagnostic pulse monitoring detects missing off-pulse and trips.'
           },
           { 
             name: 'Short-circuit with M (0V) to VSn or defective', intOn: 'Yes', intOff: 'N/A', ext: 'N/A',
-            cause: 'VSn supply grounded or internal PTC overcurrent trip.',
+            faultType: 'short_vsn_M',
+            diagCode: '0x307H', diagMsg: 'Overload or internal sensor supply short-circuit to ground',
+            cause: 'VS0 supply grounded or internal PTC overcurrent trip.',
             consequence: 'PTC trips power; channels drop to 0V and passivate safely.',
-            example: 'E.g., VSn wire pinched to ground frame trips internal electronic fuse, forcing safety inputs to 0.'
+            safetyOutcome: 'PTC fuse trips -> VS0 voltage drops to 0V -> De-energizes safety actuators.',
+            example: 'E.g., VS0 wire pinched to ground frame trips internal electronic fuse, forcing safety inputs to 0.'
           }
         ]
       },
       app32: {
         id: 'app32',
-        title: 'Application 3.2: SIL3 / Cat.4 / PLe (Antivalent)',
+        title: 'Application 3.2: SIL3 / Cat.4 / PLe (Non-Equivalent)',
         safety: 'SIL 3 / Cat. 4 / PLe',
         eval: '1oo2 evaluation, non-equivalent',
-        evalTooltip: '1oo2 Non-Equivalent / Antivalent (1 out of 2): Dual-channel evaluation using 1 NO + 1 NC contact. Signals must always be opposite (1/0). Short circuits force identical signals (1/1 or 0/0), breaking antivalency instantly for immediate Cat. 4 detection.',
+        evalTooltip: '1oo2 Non-Equivalent (1 out of 2): Dual-channel evaluation using 1 NO + 1 NC contact. Signals must always be opposite (1/0). Short circuits force identical signals (1/1 or 0/0), breaking non-equivalence instantly for immediate Cat. 4 detection.',
         section: 'Section 4.3.3.2 (p. 49–51)',
         page: 49,
         tablePage: 51,
         figInt: 'Figure 4-9 / 4-10 (Internal Supply)',
         figExt: 'Figure 4-9 / 4-10 (External 24V)',
         tableRef: 'Table 4-13',
-        scRule: 'Optional (Cat 4 via Antivalent Contact Break)',
         scTooltip: 'Non-equivalent (1 NO + 1 NC) contacts always sit at opposite states (1/0). A short circuit forces them to identical states (1/1 or 0/0), instantly triggering a Cat 4 fault.',
         allowExt: true,
-        warning: 'WARNING: Cat.4 / PLe is achieved via non-equivalent (1 NO + 1 NC) contacts. A short circuit breaks antivalency instantly (1/1 or 0/0) without waiting for E-stop press (Section 4.3.3.2).',
-        params: { eval: '1oo2 evaluation, non-equivalent', supply: 'Sensor supply n / External', scTest: 'Disable / Enable' },
+        warning: 'WARNING: Cat.4 / PLe is achieved via non-equivalent (1 NO + 1 NC) contacts. A short circuit breaks non-equivalence instantly (1/1 or 0/0) without waiting for E-stop press (Section 4.3.3.2).',
+        subWarnings: [
+          { title: 'Non-Equivalent Logic Break', text: 'Because contacts sit at opposite states (1/0), any wire short forces identical potentials (1/1 or 0/0), breaking non-equivalence immediately while idle.' },
+          { title: 'Short-Circuit Test Flexibility', text: 'Short-circuit test pulses are optional in 1oo2 non-equivalent mode because static non-equivalent logic provides Cat 4 fault coverage.' },
+          { title: 'Mechanical Switch Requirements', text: 'Sensors must feature mechanically linked non-equivalent contacts (1 NO + 1 NC) with positive drive opening.' }
+        ],
+        params: { eval: '1oo2 evaluation, non-equivalent', supply: 'VSn Internal / External 24V' },
         faults: [
           { 
             name: 'Short-circuit within the channel pair', intOn: 'Yes', intOff: 'Yes', ext: 'Yes',
-            cause: 'NO wire touching NC wire inside dual-channel antivalent sensor cable.',
-            consequence: 'Forces both channels to identical potential (1/1 or 0/0), breaking antivalency (1/0) immediately while idle for instant Cat 4 trip.',
-            example: 'E.g., A crushed cable short-circuits NO and NC wires together. Both inputs read 1/1, instantly breaking antivalency and stopping the machine.'
+            faultType: 'short_pair',
+            diagCode: '0x314H (0x303H)', diagMsg: 'Discrepancy failure, channel status 1/1',
+            cause: 'NO wire touching NC wire inside dual-channel non-equivalent sensor cable.',
+            consequence: 'Forces both CH1 (DI0) and CH2 (DI4) to 1/1 or 0/0, breaking 1/0 non-equivalent logic immediately while idle.',
+            safetyOutcome: 'Non-equivalent logic broken (1/1 state) -> Instant channel pair passivation -> Machine stopped immediately.',
+            example: 'E.g., A crushed cable short-circuits NO and NC wires together. Both inputs read 1/1, instantly breaking non-equivalence and stopping the machine.'
           },
           { 
             name: 'Short-circuit with other channels / supplies', intOn: 'Yes*', intOff: 'Yes*', ext: 'Yes*',
+            faultType: 'short_other',
+            diagCode: '0x314H (0x303H)', diagMsg: 'Discrepancy failure, channel status 1/1',
             cause: 'Foreign +24V line touching NO or NC signal wire.',
-            consequence: 'Breaks 1/0 antivalent logic (both read HIGH 1/1); triggers instant non-equivalence discrepancy error.',
+            consequence: 'Breaks 1/0 non-equivalent logic (both read HIGH 1/1); triggers instant non-equivalence discrepancy error.',
+            safetyOutcome: 'Non-equivalence discrepancy -> Instant channel pair passivation -> Prevents startup.',
             example: 'E.g., Raw 24V feeds into the 0V NC channel wire. Inputs read 1/1 instead of 1/0, causing immediate passivation.'
           },
           { 
             name: 'Short-circuit with L+ to DIn', intOn: 'Yes', intOff: 'Yes*', ext: 'Yes*',
-            cause: 'Direct 24V short to input terminal DIn.',
-            consequence: 'Forces input HIGH (1). Mismatch with antivalent partner channel triggers discrepancy error immediately.',
-            example: 'E.g., DIn shorted to +24V. Antivalent partner is also at 24V (1/1 state), triggering instant discrepancy.'
+            faultType: 'short_Lplus',
+            diagCode: '0x31CH / 0x314H', diagMsg: 'Input shorted to P / Discrepancy failure',
+            cause: 'Direct 24V short to input terminal DI0.',
+            consequence: 'Forces CH1 (DI0) HIGH (1). Mismatch with non-equivalent CH2 (DI4) triggers discrepancy immediately.',
+            safetyOutcome: 'Forces 1/1 state -> Non-equivalence broken -> Immediate diagnostic passivation.',
+            example: 'E.g., DI0 shorted to +24V. Non-equivalent partner DI4 is also at 24V (1/1 state), triggering instant discrepancy.'
           },
           { 
             name: 'Short-circuit with M (0V) to DIn', intOn: 'Yes*', intOff: 'Yes*', ext: 'Yes*',
+            faultType: 'short_M',
+            diagCode: '0x314H (0x300H)', diagMsg: 'Discrepancy failure, channel status 0/0',
             cause: 'Signal wire shorted to 0V ground frame.',
-            consequence: 'Forces input LOW (0). If NC channel was HIGH, antivalency is broken instantly (0/0).',
-            example: 'E.g., NC signal wire Grounds to frame (0V). Both channels read 0/0, breaking antivalency and passivating.'
+            consequence: 'Forces input LOW (0). If NC channel was HIGH, non-equivalence is broken instantly (0/0).',
+            safetyOutcome: 'Forces 0/0 state -> Non-equivalence broken -> Immediate safety output trip.',
+            example: 'E.g., NC signal wire Grounds to frame (0V). Both channels read 0/0, breaking non-equivalence and passivating.'
           },
           { 
             name: 'Discrepancy error', intOn: 'Yes', intOff: 'Yes', ext: 'Yes',
+            faultType: 'discrepancy',
+            diagCode: '0x314H', diagMsg: 'Discrepancy error',
             cause: 'Slow contact switching, mechanical failure, or broken switch arm.',
             consequence: 'Signals fail to maintain opposite states (1/0); passivates channel pair.',
+            safetyOutcome: 'Discrepancy timer exceeded -> Channel pair passivated -> Safe state achieved.',
             example: 'E.g., Mechanical actuator arm breaks, leaving both NO and NC contacts open (0/0). PLC passivates.'
           },
           { 
             name: 'Short-circuit with L+ to VSn', intOn: 'Yes', intOff: 'No', ext: 'N/A',
-            cause: 'External +24V touching VSn terminal.',
-            consequence: 'Test pulses suppressed (when test enabled); VSn group passivates.',
-            example: 'E.g., External 24V shorted to VSn. Test generator detects pulse suppression and trips.'
+            faultType: 'short_vsn_Lplus',
+            diagCode: '0x306H', diagMsg: 'Internal sensor supply short-circuit to P',
+            cause: 'External +24V touching VS0 terminal.',
+            consequence: 'Test pulses suppressed (when test enabled); VS0 group passivates.',
+            safetyOutcome: 'Test pulse suppression detected -> Passivates VS0 group -> Safety system lockout.',
+            example: 'E.g., External 24V shorted to VS0. Test generator detects pulse suppression and trips.'
           },
           { 
             name: 'Short-circuit with M (0V) to VSn or defective', intOn: 'Yes', intOff: 'Yes', ext: 'N/A',
-            cause: 'VSn grounded or PTC fuse overcurrent.',
+            faultType: 'short_vsn_M',
+            diagCode: '0x307H', diagMsg: 'Overload or internal sensor supply short-circuit to ground',
+            cause: 'VS0 grounded or PTC fuse overcurrent.',
             consequence: 'Supply voltage drops to 0; channel pair passivates safely.',
-            example: 'E.g., VSn grounded by crushed wire; supply shuts down and inputs drop to safe 0 state.'
+            safetyOutcome: 'Supply drops to 0V -> CH1 / CH2 read 0 -> Immediate safety output trip.',
+            example: 'E.g., VS0 grounded by crushed wire; supply shuts down and inputs drop to safe 0 state.'
           }
         ]
       },
@@ -498,53 +623,94 @@
         figInt: 'Figure 4-11 (Internal VSn Pair)',
         figExt: 'N/A — External Supply Prohibited',
         tableRef: 'Table 4-15',
-        scRule: 'Mandatory Internal VSn / VSn+4 with Test Patterns',
         scTooltip: 'Dedicated internal test pattern continuously monitors loop resistance across 4-wire safety mats to distinguish between stepping on mat vs short circuits / wire breaks.',
         allowExt: false,
         warning: 'WARNING: Requires 4-wire safety mats (≥100mA rating). External power supply is strictly PROHIBITED. Total loop resistance (cables + activated mat) MUST NOT exceed 100 Ω (Section 4.3.4).',
-        params: { eval: 'Safety mat evaluation', supply: 'VSn and VSn+4 (Dedicated)', scTest: 'Enable (Fixed Pattern)' },
+        subWarnings: [
+          { title: '4-Wire Mat Current Rating', text: 'You may only use 4-wire safety mats with a current-carrying capacity of at least 100 mA (Section 4.3.4).' },
+          { title: 'Loop Resistance Limit (100 Ω)', text: 'Total ohmic resistance of interconnecting cables plus activated safety mat must not exceed 100 Ω.' },
+          { title: 'Ground Short Circuit Inspection', text: 'After resolving a short circuit of sensor supply to ground, you MUST manually test the mat by stepping on it to verify contact integrity.' },
+          { title: 'Separate Cable Routing', text: 'Cables intended for safety mat connections must be routed separately from standard digital input cables.' }
+        ],
+        params: { eval: 'Safety mat evaluation', supply: 'VSn and VSn+4 (Dedicated)' },
         faults: [
           { 
             name: 'Short-circuit within safety mat channel pair', intOn: 'No (Treated as mat activation)', intOff: 'N/A', ext: 'N/A',
+            faultType: 'short_pair',
+            diagCode: 'N/A (Process Signal 0)', diagMsg: 'Normal Safety Mat Actuation',
             cause: 'Operator stepping on 4-wire safety mat (closing contact grid).',
             consequence: 'Evaluated as legitimate actuation (process signal 0); trips safety output to stop dangerous movement.',
+            safetyOutcome: 'Legitimate safety actuation -> Process signal 0 -> Safety outputs de-energized -> Motion stopped.',
             example: 'E.g., An operator steps onto the pressure mat. Contact grid closes, PLC reads process value 0, and robot arm stops.'
           },
           { 
             name: 'Short-circuit with other safety mat pairs', intOn: 'Yes', intOff: 'N/A', ext: 'N/A',
+            faultType: 'short_mat_cross',
+            diagCode: '0x314H / 0x306H', diagMsg: 'Discrepancy error / Pattern clash',
             cause: 'Crosstalk or crushed wires between separate safety mat zones.',
             consequence: 'Dedicated test pattern clashes between VSn groups; passivates both safety mat zones.',
+            safetyOutcome: 'Test pattern clash -> Passivates both safety mat zones -> Locks out machine start.',
             example: 'E.g., Wires from Zone 1 mat short into Zone 2 mat. Test pattern mismatch passivates both mat zones.'
           },
           { 
+            name: 'Short-circuit with other channels used for applications 1 to 3', intOn: 'No', intOff: 'N/A', ext: 'N/A',
+            faultType: 'short_mat_app',
+            diagCode: 'N/A (No Detection)', diagMsg: 'No Diagnostic Detection',
+            cause: 'Cross-talk or wiring connection between safety mat input loop and standard DI channel.',
+            consequence: 'Manual Table 4-15 specifies no diagnostic trip for cross-circuits with Applications 1-3.',
+            safetyOutcome: 'No diagnostic trip triggered. Separate cable routing mandatory per Section 4.3.4.',
+            example: 'E.g., Mat signal wire shorts to standard DI input. No pattern trip occurs; cables must be physically separated.'
+          },
+          { 
             name: 'Short-circuit with L+ to DIn or DIn+4', intOn: 'Yes*', intOff: 'N/A', ext: 'N/A',
+            faultType: 'short_Lplus',
+            diagCode: '0x31CH / 0x314H', diagMsg: 'Input shorted to P / Pattern error',
             cause: 'External +24V line shorting into safety mat signal wire.',
             consequence: 'Corrupts expected test pattern pulses; passivates assigned safety mat channel pair.',
+            safetyOutcome: 'Pattern pulse corruption -> Safety mat channel pair passivated -> Immediate safe stop.',
             example: 'E.g., A loose 24V wire touches mat input terminal DI0. Pattern test fails and passivates mat zone.'
           },
           { 
             name: 'Short-circuit with M (0V) to DIn or DIn+4', intOn: 'Yes', intOff: 'N/A', ext: 'N/A',
+            faultType: 'short_M',
+            diagCode: '0x307H', diagMsg: 'Overload or internal sensor supply short-circuit to ground',
             cause: 'Mat cable insulation damaged touching grounded steel floor plate.',
             consequence: 'Ground current detected by diagnostic circuit; passivates safety mat pair immediately.',
+            safetyOutcome: 'Ground leakage detected -> Immediate mat zone passivation -> Prevents hazardous operation.',
             example: 'E.g., Forklift tyre cuts mat wire insulation against grounded floor plate. PLC detects ground fault and passivates.'
           },
           { 
             name: 'Wire break', intOn: 'Yes', intOff: 'N/A', ext: 'N/A',
+            faultType: 'wire_break',
+            diagCode: '0x06H', diagMsg: 'Wire break',
             cause: 'Severed 4-wire mat cable or loose terminal connection.',
             consequence: 'Loop resistance exceeds 100 Ω threshold; passivates safety mat zone immediately.',
+            safetyOutcome: 'Loop resistance > 100 Ω -> Immediate passivation -> Trips safety outputs to safe state.',
             example: 'E.g., A wire breaks inside the mat corner cable. Loop resistance goes infinite and PLC passivates mat.'
           },
           { 
-            name: 'Short-circuit with L+ / M (0V) to VSn or VSn+4', intOn: 'Yes*', intOff: 'N/A', ext: 'N/A',
-            cause: 'Power line shorted into VSn sensor supply line of mat.',
-            consequence: 'Test pattern signal generator corrupted; passivates safety mat channel pair.',
-            example: 'E.g., External power bleeds into VSn0. Pattern test fails, triggering channel passivation.'
+            name: 'Short-circuit with L+ to VSn or VSn+4', intOn: 'Yes*', intOff: 'N/A', ext: 'N/A',
+            faultType: 'short_vsn_Lplus',
+            diagCode: '0x306H', diagMsg: 'Internal sensor supply short-circuit to P',
+            cause: 'External power line shorted into VSn sensor supply line of mat.',
+            consequence: 'Test pattern signal generator corrupted (detected if signal corrupted); passivates safety mat channel pair.',
+            safetyOutcome: 'Pattern generator corrupted -> Safety mat zone passivated -> Machine locked out.',
+            example: 'E.g., External power bleeds into VS0. Pattern test fails, triggering channel passivation.'
+          },
+          { 
+            name: 'Short-circuit with M (0V) to VSn or VSn+4', intOn: 'Yes', intOff: 'N/A', ext: 'N/A',
+            faultType: 'short_vsn_M',
+            diagCode: '0x307H', diagMsg: 'Supply short to ground',
+            cause: 'Ground short on VSn sensor supply line of mat.',
+            consequence: 'Unconditionally detected by internal diagnostic monitoring; passivates safety mat pair.',
+            safetyOutcome: 'Ground short detected -> Safety mat zone passivated -> Machine locked out.',
+            example: 'E.g., VS0 grounded by crushed wire; supply shuts down and safety mat pair passivates unconditionally.'
           }
         ]
       }
     };
 
-    // --- REUSABLE SECTION PANEL WITH CORNER INDICATORS ---
+    // Reusable Panel
     const AkPanel = ({ children, className = '' }) => (
       <div className={`ak-panel ${className}`}>
         <div className="ak-corner-tl"></div>
@@ -553,26 +719,141 @@
       </div>
     );
 
-    // --- PURE VECTOR SVG SCHEMATIC COMPONENT ---
-    const SvgWiringDiagram = ({ appKey, supplyMode, animate }) => {
+    // Compute Non-Overlapping Grouped Wire Paths
+    function calculateOrthogonalWirePaths(appKey, supplyMode) {
       const isExt = supplyMode === 'external';
 
-      const renderWire = (d, color, isPulse = false) => (
-        <g>
-          <path d={d} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-          {animate && (
-            <path
-              d={d}
-              fill="none"
-              stroke="#ffffff"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={isPulse ? "animated-wire-pulse" : "animated-wire-dc"}
-            />
-          )}
-        </g>
-      );
+      const fdi = {
+        di0: { x: 435, y: 75 },
+        di4: { x: 435, y: 120 },
+        vs0: { x: 435, y: 170 },
+        vs4: { x: 435, y: 215 }
+      };
+
+      const extLPlus = { x: 125, y: 49 };
+      let wireList = [];
+
+      if (appKey === 'app1') {
+        const inPwr = { x: 195, y: 125 };
+        const outSig = { x: 265, y: 125 };
+
+        if (!isExt) {
+          wireList.push({
+            points: [fdi.vs0, {x: 340, y: 170}, {x: 340, y: 235}, {x: 110, y: 235}, {x: 110, y: 125}, inPwr],
+            color: '#d97706', isPulse: true
+          });
+          wireList.push({
+            points: [outSig, {x: 370, y: 125}, {x: 370, y: 75}, fdi.di0],
+            color: '#00a8cc', isPulse: true
+          });
+        } else {
+          wireList.push({
+            points: [extLPlus, {x: 125, y: 125}, inPwr],
+            color: '#dc2626', isPulse: false
+          });
+          wireList.push({
+            points: [outSig, {x: 370, y: 125}, {x: 370, y: 75}, fdi.di0],
+            color: '#00a8cc', isPulse: false
+          });
+        }
+      } else if (appKey === 'app2' || appKey === 'app31' || appKey === 'app32') {
+        const isApp31 = appKey === 'app31';
+        const isApp31Ext = isApp31 && isExt;
+        
+        const inCh1 = { x: 195, y: 110 };
+        const inCh2 = { x: 195, y: 150 };
+        const outCh1 = { x: 265, y: 110 };
+        const outCh2 = { x: 265, y: 150 };
+
+        const pulseSignal = isApp31 || appKey === 'app32';
+
+        if (!isExt) {
+          wireList.push({
+            points: [fdi.vs0, {x: 340, y: 170}, {x: 340, y: 235}, {x: 110, y: 235}, {x: 110, y: 110}, inCh1],
+            color: '#d97706', isPulse: pulseSignal
+          });
+          wireList.push({
+            points: [fdi.vs4, {x: 360, y: 215}, {x: 360, y: 250}, {x: 130, y: 250}, {x: 130, y: 150}, inCh2],
+            color: '#d97706', isPulse: pulseSignal
+          });
+          wireList.push({
+            points: [outCh1, {x: 370, y: 110}, {x: 370, y: 75}, fdi.di0],
+            color: '#00a8cc', isPulse: pulseSignal
+          });
+          wireList.push({
+            points: [outCh2, {x: 385, y: 150}, {x: 385, y: 120}, fdi.di4],
+            color: '#00a8cc', isPulse: pulseSignal
+          });
+        } else if (isApp31Ext) {
+          wireList.push({
+            points: [fdi.vs0, {x: 340, y: 170}, {x: 340, y: 235}, {x: 110, y: 235}, {x: 110, y: 110}, inCh1],
+            color: '#d97706', isPulse: true
+          });
+          wireList.push({
+            points: [extLPlus, {x: 125, y: 150}, inCh2],
+            color: '#dc2626', isPulse: false
+          });
+          wireList.push({
+            points: [outCh1, {x: 370, y: 110}, {x: 370, y: 75}, fdi.di0],
+            color: '#00a8cc', isPulse: true
+          });
+          wireList.push({
+            points: [outCh2, {x: 385, y: 150}, {x: 385, y: 120}, fdi.di4],
+            color: '#00a8cc', isPulse: false
+          });
+        } else {
+          wireList.push({
+            points: [extLPlus, {x: 125, y: 110}, inCh1],
+            color: '#dc2626', isPulse: false
+          });
+          wireList.push({
+            points: [{x: 125, y: 110}, {x: 125, y: 150}, inCh2],
+            color: '#dc2626', isPulse: false
+          });
+          wireList.push({
+            points: [outCh1, {x: 370, y: 110}, {x: 370, y: 75}, fdi.di0],
+            color: '#00a8cc', isPulse: false
+          });
+          wireList.push({
+            points: [outCh2, {x: 385, y: 150}, {x: 385, y: 120}, fdi.di4],
+            color: '#00a8cc', isPulse: false
+          });
+        }
+      } else if (appKey === 'appMat') {
+        const in1 = { x: 175, y: 135 };
+        const in2 = { x: 175, y: 155 };
+        const out1 = { x: 305, y: 135 };
+        const out2 = { x: 305, y: 155 };
+
+        wireList.push({
+          points: [fdi.vs0, {x: 340, y: 170}, {x: 340, y: 235}, {x: 110, y: 235}, {x: 110, y: 135}, in1],
+          color: '#d97706', isPulse: true
+        });
+        wireList.push({
+          points: [fdi.vs4, {x: 360, y: 215}, {x: 360, y: 250}, {x: 130, y: 250}, {x: 130, y: 155}, in2],
+          color: '#d97706', isPulse: true
+        });
+        wireList.push({
+          points: [out1, {x: 370, y: 135}, {x: 370, y: 75}, fdi.di0],
+          color: '#00a8cc', isPulse: true
+        });
+        wireList.push({
+          points: [out2, {x: 385, y: 155}, {x: 385, y: 120}, fdi.di4],
+          color: '#00a8cc', isPulse: true
+        });
+      }
+
+      return wireList;
+    }
+
+    function pointsToSvgPath(points) {
+      return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+    }
+
+    // Vector Schematic Diagram Engine
+    const SvgWiringDiagram = ({ appKey, supplyMode, animate }) => {
+      const isExt = supplyMode === 'external';
+      const wireList = calculateOrthogonalWirePaths(appKey, supplyMode);
 
       return (
         <div className="w-full bg-white border border-slate-200 rounded-lg p-3">
@@ -582,166 +863,491 @@
                 <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#f1f5f9" strokeWidth="1"/>
               </pattern>
             </defs>
+
+            {/* LAYER 1: Background Grid */}
             <rect width="680" height="270" fill="url(#svgGrid)" />
+            
+            {/* GROUPED & CENTERED SCHEMATIC ASSEMBLY */}
+            <g id="fdi-schematic-assembly" transform="translate(5, 0)">
+              
+              {/* LAYER 2: Module & Component Background Bodies */}
+              <rect x="410" y="15" width="250" height="240" rx="6" fill="#ffffff" stroke="#cbd5e1" strokeWidth="2" />
+              <rect x="410" y="15" width="250" height="34" rx="6" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="1" />
+              <text x="535" y="37" fill="#0f172a" fontSize="12" fontWeight="bold" textAnchor="middle" fontFamily="Inter">ET 200SP F-DI 8x24VDC HF</text>
+              <rect x="410" y="49" width="250" height="4" fill="#00a8cc" />
 
-            {/* BaseUnit Module Box */}
-            <rect x="410" y="15" width="250" height="240" rx="6" fill="#ffffff" stroke="#cbd5e1" strokeWidth="2" />
-            <rect x="410" y="15" width="250" height="34" rx="6" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="1" />
-            <text x="535" y="37" fill="#0f172a" fontSize="12" fontWeight="bold" textAnchor="middle" fontFamily="Inter">
-              ET 200SP F-DI 8x24VDC HF
-            </text>
-            <rect x="410" y="49" width="250" height="4" fill="#00a8cc" />
+              {/* External 24V Supply Unit */}
+              {isExt && (
+                <g id="ext-supply-unit">
+                  <rect x="15" y="15" width="130" height="55" rx="6" fill="#ffffff" stroke="#dc2626" strokeWidth="1.5" />
+                  <text x="80" y="34" fill="#00a8cc" fontSize="10" fontWeight="bold" textAnchor="middle" fontFamily="Inter">EXT 24V DC SUPPLY</text>
+                  <text x="105" y="52" fill="#dc2626" fontSize="10" fontWeight="bold" textAnchor="end" fontFamily="JetBrains Mono">L+ (24V)</text>
+                </g>
+              )}
 
-            {/* Module Terminals */}
-            <circle cx="435" cy="75" r="5.5" fill="#00a8cc" />
-            <text x="450" y="79" fill="#0f172a" fontSize="11" fontWeight="bold" fontFamily="JetBrains Mono">1 : DI 0 (Channel 0)</text>
-
-            <circle cx="435" cy="120" r="5.5" fill="#00a8cc" />
-            <text x="450" y="124" fill="#0f172a" fontSize="11" fontWeight="bold" fontFamily="JetBrains Mono">5 : DI 4 (Channel 4)</text>
-
-            <circle cx="435" cy="170" r="5.5" fill="#d97706" />
-            <text x="450" y="174" fill="#0f172a" fontSize="11" fontWeight="bold" fontFamily="JetBrains Mono">9 : VS 0 (Supply 0)</text>
-
-            <circle cx="435" cy="215" r="5.5" fill="#d97706" />
-            <text x="450" y="219" fill="#0f172a" fontSize="11" fontWeight="bold" fontFamily="JetBrains Mono">13 : VS 4 (Supply 4)</text>
-
-            {/* External Power Box */}
-            {isExt && (
-              <g>
-                <rect x="15" y="15" width="130" height="55" rx="6" fill="#ffffff" stroke="#dc2626" strokeWidth="1.5" />
-                <text x="80" y="34" fill="#00a8cc" fontSize="10" fontWeight="bold" textAnchor="middle" fontFamily="Inter">EXT 24V DC SUPPLY</text>
-                <text x="35" y="53" fill="#dc2626" fontSize="11" fontWeight="bold" fontFamily="JetBrains Mono">L+ (24V)</text>
-                <circle cx="110" cy="49" r="3.5" fill="#dc2626" />
-              </g>
-            )}
-
-            {/* SCHEMATIC DIAGRAMS WITH CLEAN NON-OVERLAPPING WIRE ROUTES */}
-            {appKey === 'app1' && (
-              <g>
-                {!isExt ? (
-                  <g>
-                    <rect x="170" y="75" width="140" height="70" rx="6" fill="#f8fafc" stroke="#64748b" strokeWidth="1.5" />
-                    <text x="240" y="95" fill="#0f172a" fontSize="11" fontWeight="bold" textAnchor="middle" fontFamily="Inter">1-Channel Sensor</text>
-                    <circle cx="195" cy="125" r="3" fill="#d97706" />
-                    <line x1="195" y1="125" x2="259" y2="115" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
-                    <circle cx="265" cy="125" r="3" fill="#00a8cc" />
-
-                    {renderWire("M 435 170 L 150 170 L 150 125 L 192 125", "#d97706", true)}
-                    {renderWire("M 265 125 L 350 125 L 350 75 L 435 75", "#00a8cc", true)}
-                  </g>
-                ) : (
-                  <g>
-                    <rect x="170" y="75" width="140" height="70" rx="6" fill="#f8fafc" stroke="#64748b" strokeWidth="1.5" />
-                    <text x="240" y="95" fill="#0f172a" fontSize="11" fontWeight="bold" textAnchor="middle" fontFamily="Inter">1-Channel Sensor</text>
-                    <circle cx="195" cy="125" r="3" fill="#dc2626" />
-                    <line x1="195" y1="125" x2="259" y2="115" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
-                    <circle cx="265" cy="125" r="3" fill="#00a8cc" />
-
-                    {renderWire("M 110 49 L 110 125 L 192 125", "#dc2626", false)}
-                    {renderWire("M 265 125 L 350 125 L 350 75 L 435 75", "#00a8cc", false)}
-                  </g>
-                )}
-              </g>
-            )}
-
-            {(appKey === 'app2' || appKey === 'app31') && (() => {
-              const isApp31 = (appKey === 'app31');
-              const isApp31Ext = (isApp31 && isExt);
-              return (
-                <g>
-                  <rect x="165" y="65" width="150" height="115" rx="6" fill="#f8fafc" stroke="#64748b" strokeWidth="1.5" />
-                  <text x="240" y="85" fill="#0f172a" fontSize="11" fontWeight="bold" textAnchor="middle" fontFamily="Inter">2-Channel Equivalent</text>
+              {/* Sensor Component Renderers with Clear Vertical Distance from Title */}
+              {appKey === 'app1' && (
+                <g id="sensor-1ch">
+                  <rect x="170" y="70" width="140" height="80" rx="6" fill="#f8fafc" stroke="#64748b" strokeWidth="1.5" />
+                  <text x="240" y="88" fill="#0f172a" fontSize="11" fontWeight="bold" textAnchor="middle" fontFamily="Inter">1-Channel Sensor (1NC)</text>
                   
-                  {/* Contact 1 NC */}
-                  <circle cx="195" cy="110" r="3" fill={!isExt || isApp31Ext ? "#d97706" : "#dc2626"} />
-                  <line x1="195" y1="110" x2="259" y2="101" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
-                  <circle cx="265" cy="110" r="3" fill="#00a8cc" />
+                  {/* Standard IEC 1NC Contact Symbol */}
+                  <path d="M 195 125 L 210 125" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
+                  <path d="M 210 125 L 252 108" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
+                  <path d="M 244 100 L 244 125 L 265 125" fill="none" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </g>
+              )}
 
-                  {/* Contact 2 NC */}
-                  <circle cx="195" cy="150" r="3" fill={!isExt ? "#d97706" : "#dc2626"} />
-                  <line x1="195" y1="150" x2="259" y2="141" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
-                  <circle cx="265" cy="150" r="3" fill="#00a8cc" />
+              {(appKey === 'app2' || appKey === 'app31' || appKey === 'app32') && (
+                <g id="sensor-2ch">
+                  <rect x="165" y="60" width="150" height="125" rx="6" fill="#f8fafc" stroke="#64748b" strokeWidth="1.5" />
+                  <text x="240" y="78" fill="#0f172a" fontSize="10.5" fontWeight="bold" textAnchor="middle" fontFamily="Inter">
+                    {appKey === 'app32' ? 'Non-Equivalent (1NO+1NC)' : '2-Channel Sensor (2NC)'}
+                  </text>
 
-                  {/* Mechanical Link */}
-                  <line x1="225" y1="105" x2="225" y2="145" stroke="#94a3b8" strokeWidth="1.2" strokeDasharray="3,3" />
+                  {/* CH1 1NC Contact */}
+                  <path d="M 195 110 L 210 110" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
+                  <path d="M 210 110 L 252 93" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
+                  <path d="M 244 85 L 244 110 L 265 110" fill="none" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
 
-                  {!isExt ? (
+                  {/* CH2 Contact */}
+                  {appKey === 'app32' ? (
                     <g>
-                      {renderWire("M 435 170 L 140 170 L 140 110 L 192 110", "#d97706", isApp31)}
-                      {renderWire("M 435 215 L 120 215 L 120 150 L 192 150", "#d97706", isApp31)}
-                      {renderWire("M 265 110 L 350 110 L 350 75 L 435 75", "#00a8cc", isApp31)}
-                      {renderWire("M 265 150 L 370 150 L 370 120 L 435 120", "#00a8cc", isApp31)}
-                    </g>
-                  ) : isApp31Ext ? (
-                    <g>
-                      {renderWire("M 435 170 L 140 170 L 140 110 L 192 110", "#d97706", true)}
-                      {renderWire("M 110 49 L 110 150 L 192 150", "#dc2626", false)}
-                      {renderWire("M 265 110 L 350 110 L 350 75 L 435 75", "#00a8cc", true)}
-                      {renderWire("M 265 150 L 370 150 L 370 120 L 435 120", "#00a8cc", false)}
+                      {/* CH2 1NO Contact */}
+                      <path d="M 195 150 L 210 150" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
+                      <path d="M 210 150 L 240 136" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
+                      <path d="M 244 138 L 244 150 L 265 150" fill="none" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </g>
                   ) : (
                     <g>
-                      {renderWire("M 110 49 L 110 110 L 192 110", "#dc2626", false)}
-                      {renderWire("M 110 110 L 110 150 L 192 150", "#dc2626", false)}
-                      {renderWire("M 265 110 L 350 110 L 350 75 L 435 75", "#00a8cc", false)}
-                      {renderWire("M 265 150 L 370 150 L 370 120 L 435 120", "#00a8cc", false)}
+                      {/* CH2 1NC Contact */}
+                      <path d="M 195 150 L 210 150" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
+                      <path d="M 210 150 L 252 133" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
+                      <path d="M 244 125 L 244 150 L 265 150" fill="none" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </g>
                   )}
+
+                  {/* Mechanical Linkage (Dashed vertical line) */}
+                  <line x1="228" y1="102" x2="228" y2="142" stroke="#64748b" strokeWidth="1.5" strokeDasharray="3,3" />
                 </g>
-              );
-            })()}
+              )}
 
-            {appKey === 'app32' && (
-              <g>
-                <rect x="165" y="65" width="150" height="115" rx="6" fill="#f8fafc" stroke="#64748b" strokeWidth="1.5" />
-                <text x="240" y="85" fill="#0f172a" fontSize="11" fontWeight="bold" textAnchor="middle" fontFamily="Inter">Non-Equivalent (1NO+1NC)</text>
+              {appKey === 'appMat' && (
+                <g id="safety-mat">
+                  <rect x="160" y="75" width="160" height="95" rx="8" fill="#f8fafc" stroke="#00a8cc" strokeWidth="2" />
+                  <text x="240" y="95" fill="#0f172a" fontSize="11.5" fontWeight="bold" textAnchor="middle" fontFamily="Inter">4-Wire Safety Mat</text>
+                  <text x="240" y="112" fill="#64748b" fontSize="9.5" textAnchor="middle" fontFamily="Inter">NO Operating Principle</text>
+                  <line x1="190" y1="135" x2="290" y2="135" stroke="#0f172a" strokeWidth="2.5" strokeDasharray="6,4" />
+                </g>
+              )}
 
-                {/* NO Contact */}
-                <circle cx="195" cy="110" r="3" fill={!isExt ? "#d97706" : "#dc2626"} />
-                <line x1="195" y1="110" x2="259" y2="101" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
-                <circle cx="265" cy="110" r="3" fill="#00a8cc" />
+              {/* LAYER 3: Grouped Wire Paths */}
+              <g id="fdi-wire-paths">
+                {wireList.map((wire, idx) => {
+                  const pathD = pointsToSvgPath(wire.points);
+                  return (
+                    <g key={idx}>
+                      <path d={pathD} fill="none" stroke={wire.color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                      {animate && (
+                        <path 
+                          d={pathD} 
+                          fill="none" 
+                          stroke="#ffffff" 
+                          strokeWidth="1.8" 
+                          strokeLinecap="round" 
+                          strokeLinejoin="round" 
+                          className={wire.isPulse ? "animated-wire-pulse" : "animated-wire-dc"} 
+                        />
+                      )}
+                    </g>
+                  );
+                })}
+              </g>
 
-                {/* NC Contact */}
-                <circle cx="195" cy="150" r="3" fill={!isExt ? "#d97706" : "#dc2626"} />
-                <line x1="195" y1="150" x2="265" y2="150" stroke="#0f172a" strokeWidth="2" strokeLinecap="round" />
-                <circle cx="265" cy="150" r="3" fill="#00a8cc" />
+              {/* LAYER 4: Terminal Dots & Pin Circles */}
+              <g id="fdi-terminal-pins">
+                <circle cx="435" cy="75" r="5.5" fill="#00a8cc" />
+                <text x="447" y="79" fill="#0f172a" fontSize="11" fontWeight="bold" fontFamily="JetBrains Mono">1 : DI 0</text>
 
-                <line x1="225" y1="105" x2="225" y2="150" stroke="#94a3b8" strokeWidth="1.2" strokeDasharray="3,3" />
+                <circle cx="435" cy="120" r="5.5" fill="#00a8cc" />
+                <text x="447" y="124" fill="#0f172a" fontSize="11" fontWeight="bold" fontFamily="JetBrains Mono">5 : DI 4</text>
 
-                {!isExt ? (
+                <circle cx="435" cy="170" r="5.5" fill="#d97706" />
+                <text x="447" y="174" fill="#0f172a" fontSize="11" fontWeight="bold" fontFamily="JetBrains Mono">9 : VS 0</text>
+
+                <circle cx="435" cy="215" r="5.5" fill="#d97706" />
+                <text x="447" y="219" fill="#0f172a" fontSize="11" fontWeight="bold" fontFamily="JetBrains Mono">13 : VS 4</text>
+
+                {isExt && <circle cx="125" cy="49" r="4" fill="#dc2626" />}
+
+                {appKey === 'app1' && (
                   <g>
-                    {renderWire("M 435 170 L 140 170 L 140 110 L 192 110", "#d97706", true)}
-                    {renderWire("M 435 215 L 120 215 L 120 150 L 192 150", "#d97706", true)}
-                    {renderWire("M 265 110 L 350 110 L 350 75 L 435 75", "#00a8cc", true)}
-                    {renderWire("M 265 150 L 370 150 L 370 120 L 435 120", "#00a8cc", true)}
+                    <circle cx="195" cy="125" r="4" fill={!isExt ? "#d97706" : "#dc2626"} />
+                    <circle cx="265" cy="125" r="4" fill="#00a8cc" />
+                  </g>
+                )}
+
+                {(appKey === 'app2' || appKey === 'app31' || appKey === 'app32') && (
+                  <g>
+                    <circle cx="195" cy="110" r="4" fill={!isExt || appKey === 'app31' ? "#d97706" : "#dc2626"} />
+                    <circle cx="265" cy="110" r="4" fill="#00a8cc" />
+                    <circle cx="195" cy="150" r="4" fill={!isExt ? "#d97706" : "#dc2626"} />
+                    <circle cx="265" cy="150" r="4" fill="#00a8cc" />
+                  </g>
+                )}
+
+                {appKey === 'appMat' && (
+                  <g>
+                    <circle cx="175" cy="135" r="4" fill="#d97706" />
+                    <circle cx="175" cy="155" r="4" fill="#d97706" />
+                    <circle cx="305" cy="135" r="4" fill="#00a8cc" />
+                    <circle cx="305" cy="155" r="4" fill="#00a8cc" />
+                  </g>
+                )}
+              </g>
+
+            </g>
+          </svg>
+        </div>
+      );
+    };
+
+    // HIGH-PRECISION NON-OVERLAPPING SCHEMATIC & FAULT VISUALIZER FOR SIMULATION MODAL
+    const SimulationChannelDiagram = ({ appKey, modalSupplyMode, fault, step, sctEnabled }) => {
+      const is1oo1 = appKey === 'app1';
+      const isMat = appKey === 'appMat';
+      const isExt = modalSupplyMode === 'external';
+
+      const fType = fault.faultType || 'short_Lplus';
+
+      let ch1Color = "#16a34a"; // Green
+      let ch2Color = "#16a34a";
+      let diagLed = "#16a34a";
+      let faultHighlight = step >= 2;
+      let passivated = step === 4;
+
+      if (step === 2) {
+        ch1Color = "#dc2626";
+      } else if (step === 3) {
+        ch1Color = "#d97706";
+        ch2Color = "#d97706";
+        diagLed = "#d97706";
+      } else if (step === 4) {
+        ch1Color = "#94a3b8";
+        ch2Color = "#94a3b8";
+        diagLed = "#dc2626";
+      }
+
+      // Check if pulse animation should run on VSn/DI wires
+      const isPulsing = sctEnabled && !isExt;
+
+      return (
+        <div className="w-full bg-[#121418] rounded-xl p-2.5 sm:p-3 border border-slate-700 select-none">
+          <div className="flex justify-between items-center text-xs font-mono mb-1.5 text-slate-300">
+            <span className="font-bold text-ak-cyan">
+              // LIVE PLC SCHEMATIC SCHEME ({is1oo1 ? '1oo1 EVAL' : '1oo2 EVAL'} | {isExt ? 'EXT 24V' : 'VSn INT'} | SCT: {sctEnabled ? 'ON' : 'OFF'})
+            </span>
+            <span className="text-emerald-400 font-bold">
+              {step === 1 ? '● 24V POWER OK' : step === 2 ? '⚡ FAULT INJECTED' : step === 3 ? '⏱ DIAGNOSTIC SCAN' : '🚫 PASSIVATED (0V)'}
+            </span>
+          </div>
+
+          <svg viewBox="0 0 720 185" className="w-full h-auto">
+            <rect width="720" height="185" fill="#1a1d24" rx="6" />
+
+            {/* BUS POWER RAILS (L+ and M) WITH INCREASED CLEARANCE */}
+            <line x1="20" y1="12" x2="700" y2="12" stroke="#dc2626" strokeWidth="2" />
+            <text x="25" y="21" fill="#ef4444" fontSize="8" fontWeight="bold" fontFamily="JetBrains Mono">L+ (+24V DC BUS)</text>
+
+            <line x1="20" y1="172" x2="700" y2="172" stroke="#00a8cc" strokeWidth="2" />
+            <text x="25" y="167" fill="#00a8cc" fontSize="8" fontWeight="bold" fontFamily="JetBrains Mono">M (0V RETURN / GND BUS)</text>
+
+            {/* Field Device Box - HEIGHTENED (height=124, y=26) & CLEAR TITLE CLEARANCE (y=39) */}
+            <rect x="20" y="26" width="150" height="124" rx="5" fill="#1e293b" stroke="#64748b" strokeWidth="1.5" />
+            <text x="95" y="39" fill="#ffffff" fontSize="9" fontWeight="bold" textAnchor="middle">
+              {isMat ? '4-Wire Safety Mat' : is1oo1 ? '1-Channel Switch' : appKey === 'app32' ? 'Non-Eq Switch (1NO+1NC)' : '2-Channel Switch'}
+            </text>
+
+            {/* Power Supply Input Wire into Switch (ENTERS AT BOTTOM-LEFT x:35, y:138) */}
+            {isExt ? (
+              <g id="ext-supply-wire-group">
+                <path d="M 35 12 L 35 138" fill="none" stroke="#dc2626" strokeWidth="2.5" />
+                <circle cx="35" cy="12" r="3.5" fill="#dc2626" /> {/* L+ Bus terminal node */}
+                <circle cx="35" cy="138" r="3.5" fill="#dc2626" /> {/* Switch power node at bottom-left */}
+              </g>
+            ) : (
+              <g id="vsn-supply-wire-group">
+                <path d="M 450 130 L 370 130 L 370 152 L 35 152 L 35 138" fill="none" stroke="#d97706" strokeWidth="2.5" />
+                <circle cx="450" cy="130" r="3.5" fill="#d97706" /> {/* VS0 module terminal node */}
+                <circle cx="35" cy="138" r="3.5" fill="#d97706" /> {/* Switch power node at bottom-left */}
+              </g>
+            )}
+
+            {/* DYNAMIC IEC NC SWITCH CONTACTS (POWER BUS FEEDS UPWARDS FROM x:35, y:138) */}
+            {is1oo1 ? (
+              <g>
+                {/* 1NC Internal Power Feeder from Bottom-Left (35,138) to Contact Base (35,90) */}
+                <path d="M 35 138 L 35 90 L 65 90" fill="none" stroke="#94a3b8" strokeWidth="2" />
+                
+                {/* 1NC Blade */}
+                <line 
+                  x1="65" 
+                  y1="90" 
+                  x2={fType === 'wire_break' && step >= 2 ? "95" : "107"} 
+                  y2={fType === 'wire_break' && step >= 2 ? "58" : "68"} 
+                  stroke={fType === 'discrepancy' && step >= 2 ? "#dc2626" : "#94a3b8"} 
+                  strokeWidth="2.5" 
+                  strokeLinecap="round"
+                />
+
+                {/* 1NC Terminal Post & Outgoing Lead */}
+                <path d="M 98 68 L 98 90 L 135 90" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+
+                {/* Welded Indicator Badge (Positioned at x=58..114, y=78..91 in open center space) */}
+                {fType === 'discrepancy' && step >= 2 && (
+                  <g>
+                    <circle cx="86" cy="85" r="7" fill="none" stroke="#dc2626" strokeWidth="1.5" className="animate-ping" style={{ transformOrigin: 'center', transformBox: 'fill-box' }} />
+                    <rect x="58" y="78" width="56" height="13" rx="2" fill="#dc2626" />
+                    <text x="86" y="87" fill="#ffffff" fontSize="7" fontWeight="bold" textAnchor="middle">WELDED (1)</text>
+                  </g>
+                )}
+                <circle cx="135" cy="90" r="3.5" fill={isExt ? "#dc2626" : "#d97706"} />
+                {/* REPOSITIONED CH1 TEXT LABEL NEAR RIGHT INSIDE EDGE (x=165) */}
+                <text x="165" y="82" fill="#94a3b8" fontSize="8" fontWeight="bold" textAnchor="end">CH1</text>
+              </g>
+            ) : (
+              <g>
+                {/* 2NC Internal Power Feeder from Bottom-Left (35,138) up to CH1 (35,73) and CH2 (35,108) */}
+                <path d="M 35 138 L 35 73 L 65 73" fill="none" stroke="#94a3b8" strokeWidth="2" />
+                <path d="M 35 108 L 65 108" fill="none" stroke="#94a3b8" strokeWidth="2" />
+
+                {/* CH1 1NC Contact Blade (Top post at y=51, a full 12px below title at y=39) */}
+                <line 
+                  x1="65" 
+                  y1="73" 
+                  x2={fType === 'wire_break' && step >= 2 ? "92" : "107"} 
+                  y2={fType === 'wire_break' && step >= 2 ? "48" : "56"} 
+                  stroke={fType === 'discrepancy' && step >= 2 ? "#dc2626" : "#94a3b8"} 
+                  strokeWidth="2.5" 
+                  strokeLinecap="round"
+                />
+
+                {/* CH1 1NC Terminal Post & Outgoing Lead */}
+                <path d="M 98 51 L 98 73 L 135 73" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+
+                {/* Welded/Stuck Contact Indicator for Discrepancy (Positioned at x=58..114, y=78..91 in open space between CH1 & CH2) */}
+                {fType === 'discrepancy' && step >= 2 && (
+                  <g>
+                    <circle cx="86" cy="85" r="7" fill="none" stroke="#dc2626" strokeWidth="1.5" className="animate-ping" style={{ transformOrigin: 'center', transformBox: 'fill-box' }} />
+                    <rect x="58" y="78" width="56" height="13" rx="2" fill="#dc2626" />
+                    <text x="86" y="87" fill="#ffffff" fontSize="7" fontWeight="bold" textAnchor="middle">WELDED (1)</text>
+                  </g>
+                )}
+                <circle cx="135" cy="73" r="3.5" fill={isExt ? "#dc2626" : "#d97706"} />
+                {/* REPOSITIONED CH1 TEXT LABEL NEAR RIGHT INSIDE EDGE (x=165) */}
+                <text x="165" y="65" fill="#94a3b8" fontSize="8" fontWeight="bold" textAnchor="end">CH1</text>
+
+                {/* CH2 Contact */}
+                {appKey === 'app32' ? (
+                  /* CH2 1NO Contact for Non-Equivalent */
+                  <g>
+                    <line 
+                      x1="65" 
+                      y1="108" 
+                      x2="95" 
+                      y2="95" 
+                      stroke="#94a3b8" 
+                      strokeWidth="2.5" 
+                      strokeLinecap="round"
+                    />
+                    <path d="M 98 96 L 98 108 L 135 108" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </g>
                 ) : (
+                  /* CH2 1NC Contact for Equivalent */
                   <g>
-                    {renderWire("M 110 49 L 110 110 L 192 110", "#dc2626", false)}
-                    {renderWire("M 110 110 L 110 150 L 192 150", "#dc2626", false)}
-                    {renderWire("M 265 110 L 350 110 L 350 75 L 435 75", "#00a8cc", false)}
-                    {renderWire("M 265 150 L 370 150 L 370 120 L 435 120", "#00a8cc", false)}
+                    <line 
+                      x1="65" 
+                      y1="108" 
+                      x2={fType === 'discrepancy' && step >= 2 ? "90" : "107"} 
+                      y2={fType === 'discrepancy' && step >= 2 ? "123" : "91"} 
+                      stroke="#94a3b8" 
+                      strokeWidth="2.5" 
+                      strokeLinecap="round"
+                    />
+                    <path d="M 98 86 L 98 108 L 135 108" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    {/* OPEN (0) Indicator Badge for Discrepancy (Positioned at x=58..108, y=118..131 below CH2) */}
+                    {fType === 'discrepancy' && step >= 2 && (
+                      <g>
+                        <rect x="58" y="118" width="50" height="13" rx="2" fill="#1e293b" stroke="#64748b" strokeWidth="1" />
+                        <text x="83" y="127" fill="#94a3b8" fontSize="7" fontWeight="bold" textAnchor="middle">OPEN (0)</text>
+                      </g>
+                    )}
                   </g>
+                )}
+                <circle cx="135" cy="108" r="3.5" fill={isExt ? "#dc2626" : "#d97706"} />
+                {/* REPOSITIONED CH2 TEXT LABEL NEAR RIGHT INSIDE EDGE (x=165) */}
+                <text x="165" y="120" fill="#94a3b8" fontSize="8" fontWeight="bold" textAnchor="end">CH2</text>
+
+                {/* 2NC Mechanical Linkage (Dashed line) */}
+                <line x1="82" y1="66" x2="82" y2="101" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="3,3" />
+              </g>
+            )}
+
+            {/* CH1 Wire Path */}
+            <path d={is1oo1 ? "M 135 90 L 450 90" : "M 135 73 L 450 73"} fill="none" stroke={fType === 'wire_break' && step >= 2 ? '#dc2626' : ch1Color} strokeWidth="2.5" />
+            
+            {/* LEFT-ALIGNED CH1 LABEL (x=185) TO PREVENT OVERLAP WITH FAULT DROP LINES (x=310) */}
+            <text x="185" y={is1oo1 ? 82 : 65} fill={ch1Color} fontSize="8.5" fontWeight="bold" textAnchor="start">
+              CH1 Loop ({isExt ? 'EXT 24V' : 'VS0'} → DI0)
+            </text>
+
+            {/* Animated Test Pulses Overlay on CH1 (if SCT ON) */}
+            {isPulsing && step < 4 && fType !== 'wire_break' && (
+              <path d={is1oo1 ? "M 135 90 L 450 90" : "M 135 73 L 450 73"} fill="none" stroke="#ffffff" strokeWidth="1.5" className="animated-wire-pulse" />
+            )}
+
+            {/* CH2 Wire Path */}
+            {!is1oo1 && (
+              <g>
+                <path d="M 135 108 L 450 108" fill="none" stroke={ch2Color} strokeWidth="2.5" />
+                {/* LEFT-ALIGNED CH2 LABEL (x=185) */}
+                <text x="185" y="100" fill={ch2Color} fontSize="8.5" fontWeight="bold" textAnchor="start">
+                  CH2 Loop ({isExt ? 'EXT 24V' : 'VS4'} → DI4)
+                </text>
+                {isPulsing && step < 4 && (
+                  <path d="M 135 108 L 450 108" fill="none" stroke="#ffffff" strokeWidth="1.5" className="animated-wire-pulse" />
                 )}
               </g>
             )}
 
-            {appKey === 'appMat' && (
+            {/* NON-OVERLAPPING VISUAL FAULT OVERLAYS INJECTED AT STEP >= 2 */}
+            {faultHighlight && (
+              <g id="visual-fault-overlay">
+                
+                {/* 1. Short to L+ (+24V) */}
+                {(fType === 'short_Lplus' || fType === 'short_other') && (
+                  <g>
+                    <path d="M 310 12 L 310 73" fill="none" stroke="#dc2626" strokeWidth="2.5" strokeDasharray="4,2" />
+                    <circle cx="310" cy="12" r="3.5" fill="#dc2626" />
+                    <circle cx="310" cy={is1oo1 ? 90 : 73} r="7" fill="#dc2626" opacity="0.4" className="animate-ping" style={{ transformOrigin: 'center', transformBox: 'fill-box' }} />
+                    <circle cx="310" cy={is1oo1 ? 90 : 73} r="5" fill="#dc2626" />
+                    <rect x="270" y="22" width="80" height="14" rx="3" fill="#121418" stroke="#dc2626" strokeWidth="1" />
+                    <text x="310" y="32" fill="#fca5a5" fontSize="7.5" fontWeight="bold" textAnchor="middle">⚡ SHORT TO L+</text>
+                  </g>
+                )}
+
+                {/* 2. Short to M (Ground) */}
+                {fType === 'short_M' && (
+                  <g>
+                    <path d="M 310 172 L 310 73" fill="none" stroke="#00a8cc" strokeWidth="2.5" strokeDasharray="4,2" />
+                    <circle cx="310" cy="172" r="3.5" fill="#00a8cc" />
+                    <circle cx="310" cy={is1oo1 ? 90 : 73} r="7" fill="#00a8cc" opacity="0.4" className="animate-ping" style={{ transformOrigin: 'center', transformBox: 'fill-box' }} />
+                    <circle cx="310" cy={is1oo1 ? 90 : 73} r="5" fill="#00a8cc" />
+                    <rect x="270" y="148" width="80" height="14" rx="3" fill="#121418" stroke="#00a8cc" strokeWidth="1" />
+                    <text x="310" y="158" fill="#38bdf8" fontSize="7.5" fontWeight="bold" textAnchor="middle">⚡ SHORT TO M (0V)</text>
+                  </g>
+                )}
+
+                {/* 3. Short within Channel Pair */}
+                {fType === 'short_pair' && !is1oo1 && (
+                  <g>
+                    <path d="M 390 73 L 390 108" fill="none" stroke="#d97706" strokeWidth="2.5" strokeDasharray="4,2" />
+                    <circle cx="390" cy="90.5" r="7" fill="#d97706" opacity="0.4" className="animate-ping" style={{ transformOrigin: 'center', transformBox: 'fill-box' }} />
+                    <circle cx="390" cy="73" r="4" fill="#d97706" />
+                    <circle cx="390" cy="108" r="4" fill="#d97706" />
+                    <rect x="335" y="83" width="105" height="15" rx="3" fill="#121418" stroke="#d97706" strokeWidth="1" />
+                    <text x="387" y="94" fill="#fbbf24" fontSize="7.5" fontWeight="bold" textAnchor="middle">⚡ CH1 short to CH2</text>
+                  </g>
+                )}
+
+                {/* 4. Short to VSn (L+) (REQUIREMENT 1 FIX: Bottom node at x=155, y=26 top-right of switch shape) */}
+                {fType === 'short_vsn_Lplus' && (
+                  <g>
+                    <path d="M 155 12 L 155 26" fill="none" stroke="#dc2626" strokeWidth="2.5" strokeDasharray="4,2" />
+                    <circle cx="155" cy="12" r="3.5" fill="#dc2626" />
+                    <circle cx="155" cy="26" r="7" fill="#dc2626" opacity="0.4" className="animate-ping" style={{ transformOrigin: 'center', transformBox: 'fill-box' }} />
+                    <circle cx="155" cy="26" r="4" fill="#dc2626" />
+                    <rect x="115" y="30" width="80" height="14" rx="3" fill="#121418" stroke="#dc2626" strokeWidth="1" />
+                    <text x="155" y="40" fill="#fca5a5" fontSize="7.5" fontWeight="bold" textAnchor="middle">⚡ VSn SHORT TO L+</text>
+                  </g>
+                )}
+
+                {/* 5. Short to VSn (M / Ground) */}
+                {fType === 'short_vsn_M' && (
+                  <g>
+                    <path d="M 155 172 L 155 148" fill="none" stroke="#00a8cc" strokeWidth="2.5" strokeDasharray="4,2" />
+                    <circle cx="155" cy="172" r="3.5" fill="#00a8cc" />
+                    <circle cx="155" cy="148" r="7" fill="#00a8cc" opacity="0.4" className="animate-ping" style={{ transformOrigin: 'center', transformBox: 'fill-box' }} />
+                    <circle cx="155" cy="148" r="4" fill="#00a8cc" />
+                    <rect x="115" y="148" width="80" height="14" rx="3" fill="#121418" stroke="#00a8cc" strokeWidth="1" />
+                    <text x="155" y="158" fill="#38bdf8" fontSize="7.5" fontWeight="bold" textAnchor="middle">⚡ VSn GND SHORT</text>
+                  </g>
+                )}
+
+                {/* 6. Wire Break */}
+                {fType === 'wire_break' && (
+                  <g>
+                    <circle cx="310" cy={is1oo1 ? 90 : 73} r="8" fill="#dc2626" />
+                    <text x="310" y={is1oo1 ? 93 : 76} fill="#ffffff" fontSize="8" fontWeight="bold" textAnchor="middle">✕</text>
+                    <rect x="270" y={is1oo1 ? 60 : 45} width="80" height="14" rx="3" fill="#121418" stroke="#dc2626" strokeWidth="1" />
+                    <text x="310" y={is1oo1 ? 70 : 55} fill="#fca5a5" fontSize="7.5" fontWeight="bold" textAnchor="middle">⚡ BREAK (∞ Ω)</text>
+                  </g>
+                )}
+
+                {/* 7. Discrepancy Error */}
+                {fType === 'discrepancy' && (
+                  <g>
+                    <rect x="305" y="83" width="125" height="15" rx="3" fill="#121418" stroke="#f59e0b" strokeWidth="1" />
+                    <text x="367" y="94" fill="#fbbf24" fontSize="7.5" fontWeight="bold" textAnchor="middle">⏱ CONTACT MISMATCH (1/0)</text>
+                  </g>
+                )}
+
+              </g>
+            )}
+
+            {/* ET 200SP Module Box */}
+            <rect x="450" y="25" width="250" height="130" rx="6" fill="#0f172a" stroke="#00a8cc" strokeWidth="2" />
+            <text x="575" y="42" fill="#ffffff" fontSize="10" fontWeight="bold" textAnchor="middle">ET 200SP F-DI Module</text>
+
+            {/* CH1 Terminals */}
+            <circle cx="450" cy={is1oo1 ? 90 : 73} r="4.5" fill={passivated ? "#64748b" : "#00a8cc"} />
+            <text x="462" y={is1oo1 ? 93 : 76} fill="#e2e8f0" fontSize="8.5" fontWeight="bold" fontFamily="JetBrains Mono">
+              1 : DI 0 {isExt ? '(EXT 24V)' : '& 9 : VS 0'} [CH1]
+            </text>
+
+            {/* CH2 Terminals */}
+            {!is1oo1 && (
               <g>
-                <rect x="160" y="75" width="160" height="95" rx="8" fill="#f8fafc" stroke="#00a8cc" strokeWidth="2" />
-                <text x="240" y="95" fill="#0f172a" fontSize="11.5" fontWeight="bold" textAnchor="middle" fontFamily="Inter">4-Wire Safety Mat</text>
-                <text x="240" y="112" fill="#64748b" fontSize="9.5" textAnchor="middle" fontFamily="Inter">NO Operating Principle</text>
-                <line x1="190" y1="135" x2="290" y2="135" stroke="#0f172a" strokeWidth="2.5" strokeDasharray="6,4" />
+                <circle cx="450" cy="108" r="4.5" fill={passivated ? "#64748b" : "#00a8cc"} />
+                <text x="462" y="111" fill="#e2e8f0" fontSize="8.5" fontWeight="bold" fontFamily="JetBrains Mono">
+                  5 : DI 4 {isExt ? '(EXT 24V)' : '& 13 : VS 4'} [CH2]
+                </text>
+              </g>
+            )}
 
-                <circle cx="175" cy="135" r="3" fill="#d97706" />
-                <circle cx="175" cy="155" r="3" fill="#d97706" />
-                <circle cx="305" cy="135" r="3" fill="#00a8cc" />
-                <circle cx="305" cy="155" r="3" fill="#00a8cc" />
+            {/* VS0/VS4 Terminals (if !isExt) */}
+            {!isExt && (
+              <g>
+                <circle cx="450" cy="130" r="4.5" fill="#d97706" />
+                <text x="462" y="133" fill="#e2e8f0" fontSize="8.5" fontWeight="bold" fontFamily="JetBrains Mono">
+                  9 : VS 0 (Internal Supply)
+                </text>
+              </g>
+            )}
 
-                {renderWire("M 435 170 L 140 170 L 140 135 L 172 135", "#d97706", true)}
-                {renderWire("M 435 215 L 120 215 L 120 155 L 172 155", "#d97706", true)}
-                {renderWire("M 308 135 L 350 135 L 350 75 L 435 75", "#00a8cc", true)}
-                {renderWire("M 308 155 L 370 155 L 370 120 L 435 120", "#00a8cc", true)}
+            {/* DIAG LED */}
+            <circle cx="682" cy="38" r="4" fill={diagLed} className={step === 4 ? "animate-pulse" : ""} />
+            <text x="672" y="41" fill="#94a3b8" fontSize="7.5" textAnchor="end">DIAG</text>
+
+            {/* Passivation Safe State Banner */}
+            {passivated && (
+              <g>
+                <rect x="465" y="52" width="220" height="75" rx="4" fill="#dc2626" opacity="0.95" />
+                <text x="575" y="74" fill="#ffffff" fontSize="10" fontWeight="bold" textAnchor="middle">FAIL-SAFE 0V FORCED</text>
+                <text x="575" y="90" fill="#ffffff" fontSize="8.5" textAnchor="middle">SAFE STATE ACTIVE</text>
+                <text x="575" y="104" fill="#fca5a5" fontSize="7.5" textAnchor="middle">
+                  {is1oo1 ? 'CH1 PASSIVATED' : 'CHANNELS PASSIVATED'}
+                </text>
               </g>
             )}
           </svg>
@@ -749,14 +1355,303 @@
       );
     };
 
-    // --- MAIN REACT APP COMPONENT ---
+    // OVERHAULED SIMULATION MODAL TOOL WITH RESET ON ENTRY FIX
+    const SimulationModal = ({ appKey, supplyMode, fault, appTitle, onClose }) => {
+      const cfg = APP_DATA[appKey];
+      
+      // Modal-local state for Power Supply, Short-Circuit Test, and Step
+      const [modalSupplyMode, setModalSupplyMode] = useState(supplyMode);
+      const [sctEnabled, setSctEnabled] = useState(supplyMode !== 'external');
+      const [simStep, setSimStep] = useState(1);
+
+      // RESET STEP TO 1 EVERY TIME A FAULT IS OPENED OR RE-ENTERED
+      useEffect(() => {
+        if (fault) {
+          setSimStep(1);
+          setModalSupplyMode(supplyMode);
+          setSctEnabled(supplyMode !== 'external');
+        }
+      }, [fault, supplyMode]);
+
+      if (!fault) return null;
+
+      // Handle power supply toggle inside modal
+      const handleModalSupplyToggle = (newMode) => {
+        if (!cfg.allowExt && newMode === 'external') return;
+        setModalSupplyMode(newMode);
+        if (newMode === 'external') {
+          setSctEnabled(false); // External supply forces SCT OFF
+        } else {
+          setSctEnabled(true);
+        }
+      };
+
+      const isModalExt = modalSupplyMode === 'external';
+
+      // Evaluate fault detection status dynamically based on current modal supply & SCT settings
+      let rawStatus = isModalExt ? fault.ext : (sctEnabled ? fault.intOn : fault.intOff);
+      const faultDetected = rawStatus.startsWith('Yes');
+
+      const steps = [
+        {
+          num: 1,
+          title: "1. Normal Operating State",
+          diagLed: "GREEN",
+          chLed: "GREEN",
+          chVal: isModalExt ? "24V DC (External Supply OK)" : sctEnabled ? "24V DC (Internal VSn + Test Pulses ON)" : "24V DC (Internal VSn Static)",
+          processVal: "1 (Valid Process Value)",
+          outState: "Safety Actuators ENERGIZED (Machine Active)",
+          desc: `CH1 (DI0) and CH2 (DI4) receive normal 24V supply voltages from ${isModalExt ? 'External 24V DC' : 'Internal VSn outputs'}. ${sctEnabled ? 'The PLC actively generates sub-millisecond test pulses (<1ms) on VSn to monitor wire integrity.' : 'Static 24V DC is supplied without test off-pulses.'} The Safety PLC reads valid process signal 1 and permits machine motion.`
+        },
+        {
+          num: 2,
+          title: "2. Electrical Fault Injected on Wiring",
+          diagLed: "GREEN",
+          chLed: "AMBER_WARNING",
+          chVal: "Electrical Potential Mismatch / Short Circuit",
+          processVal: "Signal Fault Injected",
+          outState: "Safety Actuators ENERGIZED (Pending Diagnostic Cycle)",
+          desc: `Fault event occurs: ${fault.cause}. Electrical potential on the field line shifts due to wire pinching, insulation failure, or physical bridge.`
+        },
+        {
+          num: 3,
+          title: "3. PLC Diagnostic Scan & Detection",
+          diagLed: faultDetected ? "FLASHING_RED" : "GREEN",
+          chLed: faultDetected ? "RED_ERROR" : "GREEN",
+          chVal: faultDetected ? "Pulse Corruption / Discrepancy Mismatch" : "Undetected Signal Override",
+          processVal: faultDetected ? "Passivation In Progress" : "1 (Unfiltered Corrupted Signal)",
+          outState: faultDetected ? "Safety Actuators TRIPPING (Output Relays / Contactors De-energizing)" : "Safety Actuators ENERGIZED (Undetected in Idle State)",
+          desc: faultDetected
+            ? `DIAGNOSTIC DETECTED: ${fault.consequence}. ${sctEnabled ? 'Active test pulses detect missing off-window or pulse crosstalk.' : 'Channel mismatch triggers discrepancy timer.'}`
+            : `UNDETECTED IN IDLE STATE: With Short-Circuit Test DISABLED, the PLC does not generate test pulses. The short circuit remains undetected until switch actuation (demand) or discrepancy occurs.`
+        },
+        {
+          num: 4,
+          title: "4. Passivation & Safe State Outcome",
+          diagLed: faultDetected ? "FLASHING_RED" : "GREEN",
+          chLed: faultDetected ? "RED_ERROR" : "GREEN",
+          chVal: faultDetected ? "0V DC Forced (Channels Passivated)" : "24V Overridden (Pending Demand)",
+          processVal: faultDetected ? "0 (Substituted Safe Value)" : "1 (Unpassivated)",
+          outState: faultDetected ? "Safety Actuators DE-ENERGIZED (STO Active / Motion Halted)" : "Safety Actuators ENERGIZED (Demand-Based Passivation Pending)",
+          desc: faultDetected
+            ? `SAFETY OUTCOME: ${fault.safetyOutcome} Affected channels are passivated. Process value 0 is forced in the PII image, de-energizing output relays/contactors and safely halting machine motion.`
+            : `DEMAND-BASED OUTCOME: As per Table 4-7/4-9, this fault condition is not detected during static idle state with SCT OFF. Passivation will only trigger upon physical switch demand when discrepancy timer expires.`
+        }
+      ];
+
+      const cur = steps[simStep - 1];
+
+      return (
+        <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white border-2 border-slate-700 rounded-xl shadow-2xl max-w-6xl lg:max-w-7xl w-full max-h-[96vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            
+            {/* Modal Header Bar with Dual Toggles */}
+            <div className="bg-[#121418] text-white px-4 py-2.5 border-b border-slate-800 flex justify-between items-center flex-wrap gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <TerminalIcon className="w-4 h-4 text-ak-cyan" />
+                <h3 className="font-bold text-sm sm:text-base tracking-wide">// PLC SAFETY FAULT SIMULATOR</h3>
+              </div>
+
+              {/* DUAL TOGGLE CONTROL BAR: POWER SUPPLY + SCT */}
+              <div className="flex items-center gap-3">
+                {/* Power Supply Toggle */}
+                <div className="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1 rounded border border-slate-700">
+                  <span className="text-slate-400 font-mono text-[11px] font-bold">POWER:</span>
+                  <button
+                    disabled={!cfg.allowExt}
+                    onClick={() => handleModalSupplyToggle(modalSupplyMode === 'internal' ? 'external' : 'internal')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold font-mono transition-all ${
+                      !cfg.allowExt
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                        : modalSupplyMode === 'internal'
+                        ? 'bg-amber-600 text-white shadow-sm'
+                        : 'bg-red-600 text-white shadow-sm'
+                    }`}
+                  >
+                    {!cfg.allowExt ? 'INTERNAL ONLY' : modalSupplyMode === 'internal' ? 'INTERNAL (VSn)' : 'EXTERNAL (24V)'}
+                  </button>
+                </div>
+
+                {/* Short-Circuit Test Toggle */}
+                <div className="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1 rounded border border-slate-700">
+                  <span className="text-slate-400 font-mono text-[11px] font-bold">SCT:</span>
+                  <button
+                    disabled={isModalExt}
+                    onClick={() => setSctEnabled(!sctEnabled)}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold font-mono transition-all ${
+                      isModalExt
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                        : sctEnabled
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'bg-rose-600 text-white shadow-sm'
+                    }`}
+                  >
+                    {isModalExt ? 'DISABLED (EXT 24V)' : sctEnabled ? 'ENABLED (ON)' : 'DISABLED (OFF)'}
+                  </button>
+                </div>
+              </div>
+
+              <button 
+                onClick={onClose}
+                className="text-slate-400 hover:text-white font-mono text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 transition-colors"
+              >
+                ✕ CLOSE
+              </button>
+            </div>
+
+            {/* STACKED VERTICAL CONTENT BODY */}
+            <div className="p-3 sm:p-4 flex flex-col gap-2.5 bg-slate-50 overflow-y-auto custom-scrollbar flex-1 min-h-0">
+              
+              {/* Fault Info Header Card */}
+              <div className="bg-white p-2.5 sm:p-3 rounded-lg border border-slate-200 shadow-sm flex flex-wrap justify-between items-center gap-2 flex-shrink-0">
+                <div>
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-0.5">{appTitle}</span>
+                  <strong className="text-slate-900 font-extrabold text-sm sm:text-base block">{fault.name}</strong>
+                </div>
+
+                {/* SIEMENS DIAGNOSTIC HEX CODE BADGE */}
+                <div className="bg-slate-900 text-white px-3 py-1 rounded border border-slate-700 font-mono text-xs flex items-center gap-2">
+                  <div>
+                    <span className="text-slate-400 text-[9px] block uppercase font-bold">PLC Diagnostic Code</span>
+                    <strong className="text-ak-cyan font-bold text-xs block">{fault.diagCode}</strong>
+                  </div>
+                  <span className="text-slate-300 text-[10px] italic border-l border-slate-700 pl-2">{fault.diagMsg}</span>
+                </div>
+              </div>
+
+              {/* LIVE DYNAMIC CHANNEL WIRING SCHEMATIC DIAGRAM */}
+              <div className="flex-shrink-0">
+                <SimulationChannelDiagram 
+                  appKey={appKey} 
+                  modalSupplyMode={modalSupplyMode} 
+                  fault={fault} 
+                  step={simStep} 
+                  sctEnabled={sctEnabled} 
+                />
+              </div>
+
+              {/* Step Navigation Bar */}
+              <div className="grid grid-cols-4 gap-2 flex-shrink-0">
+                {steps.map((s) => (
+                  <button
+                    key={s.num}
+                    onClick={() => setSimStep(s.num)}
+                    className={`p-1.5 sm:p-2 rounded text-center text-xs font-bold border transition-all ${
+                      simStep === s.num
+                        ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    Step {s.num}
+                  </button>
+                ))}
+              </div>
+
+              {/* Simulation Dashboard Panel */}
+              <div className="bg-[#121418] rounded-xl p-3 text-white border border-slate-800 flex flex-col gap-2 flex-shrink-0">
+                <div className="flex justify-between items-center border-b border-slate-800 pb-1.5">
+                  <span className="font-mono font-bold text-white text-xs uppercase tracking-wide">
+                    {cur.title}
+                  </span>
+                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                    STEP {simStep}/4
+                  </span>
+                </div>
+
+                {/* Status Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 my-0.5 text-xs">
+                  <div className="bg-slate-800/90 p-2 rounded border border-slate-700">
+                    <span className="text-slate-400 text-[10px] block font-mono">DIAG LED</span>
+                    <span className={`font-bold block mt-0.5 text-xs ${cur.diagLed === 'GREEN' ? 'text-emerald-400' : 'text-rose-400 animate-pulse'}`}>
+                      ● {cur.diagLed}
+                    </span>
+                  </div>
+                  <div className="bg-slate-800/90 p-2 rounded border border-slate-700">
+                    <span className="text-slate-400 text-[10px] block font-mono">CHANNEL LED</span>
+                    <span className={`font-bold block mt-0.5 text-xs ${cur.chLed === 'GREEN' ? 'text-emerald-400' : cur.chLed === 'AMBER_WARNING' ? 'text-amber-400' : 'text-rose-500'}`}>
+                      ● {cur.chLed}
+                    </span>
+                  </div>
+                  <div className="bg-slate-800/90 p-2 rounded border border-slate-700">
+                    <span className="text-slate-400 text-[10px] block font-mono">PROCESS VALUE (PII)</span>
+                    <strong className="text-white block mt-0.5 text-xs">{cur.processVal}</strong>
+                  </div>
+                  <div className="bg-slate-800/90 p-2 rounded border border-slate-700">
+                    <span className="text-slate-400 text-[10px] block font-mono">CHANNEL VOLTAGE</span>
+                    <strong className="text-amber-300 block mt-0.5 text-xs leading-snug">{cur.chVal}</strong>
+                  </div>
+                </div>
+
+                {/* Safety Output Status Bar */}
+                <div className="bg-slate-900 p-2 rounded-lg border border-slate-700">
+                  <span className="text-slate-400 text-[10px] block font-bold mb-0.5">// SAFETY ACTUATOR REACTION</span>
+                  <p className={`font-bold text-xs ${simStep === 4 && faultDetected ? 'text-rose-400 font-extrabold' : simStep === 3 && faultDetected ? 'text-amber-300' : 'text-emerald-400'}`}>
+                    ► {cur.outState}
+                  </p>
+                </div>
+
+                {/* Detailed Narrative */}
+                <p className="text-xs text-slate-300 leading-relaxed bg-slate-800/60 p-2.5 rounded border border-slate-700">
+                  {cur.desc}
+                </p>
+              </div>
+
+            </div>
+
+            {/* Footer Control Buttons */}
+            <div className="bg-white p-3 border-t border-slate-200 flex justify-between items-center flex-shrink-0">
+              <button
+                disabled={simStep === 1}
+                onClick={() => setSimStep(s => Math.max(1, s - 1))}
+                className="px-3.5 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs disabled:opacity-40 transition-all"
+              >
+                ← Previous
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSimStep(1)}
+                  className="px-3 py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-all"
+                >
+                  Reset
+                </button>
+                {simStep < 4 ? (
+                  <button
+                    onClick={() => setSimStep(s => Math.min(4, s + 1))}
+                    className="px-4 py-1.5 rounded bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition-all flex items-center gap-1"
+                  >
+                    Next Step →
+                  </button>
+                ) : (
+                  <button
+                    onClick={onClose}
+                    className="px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all"
+                  >
+                    Finish Simulation
+                  </button>
+                )}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      );
+    };
+
+    // Main Application Component
     const App = () => {
       const [appKey, setAppKey] = useState('app31');
       const [supplyMode, setSupplyMode] = useState('internal');
       const [animate, setAnimate] = useState(true);
-      const [hoveredFault, setHoveredFault] = useState(null);
+      const [simulatedFault, setSimulatedFault] = useState(null);
 
       const cfg = APP_DATA[appKey];
+      const dynamicSctRule = getSctRuleText(appKey, supplyMode);
+
+      // Dynamic Sensor Supply text matching selected mode
+      const displaySensorSupplyText = appKey === 'appMat' 
+        ? 'VSn Dedicated Internal' 
+        : (supplyMode === 'internal' ? 'VSn Internal' : 'External 24V');
 
       const handleSupplyChange = (mode) => {
         if (!cfg.allowExt && mode === 'external') return;
@@ -765,438 +1660,478 @@
 
       const handleAppChange = (key) => {
         setAppKey(key);
-        setHoveredFault(null);
         if (!APP_DATA[key].allowExt && supplyMode === 'external') {
           setSupplyMode('internal');
         }
       };
 
+      const handleOpenSimulation = (fault) => {
+        setSimulatedFault(fault);
+      };
+
       return (
-        <div className="min-h-screen flex flex-col w-full bg-[#fdfdfd]">
-          {/* Dark Charcoal Corporate Header Footprint Bar */}
-          <header className="bg-[#121418] border-b border-[#1a1d24] px-6 py-2.5 flex justify-between items-center text-xs sm:text-sm text-slate-400 shadow-md w-full flex-shrink-0">
-            <div className="flex items-center gap-2.5">
-              <BuildingIcon className="w-4 h-4 text-ak-cyan" />
-              <span className="font-bold text-white tracking-wide">Labtech Engineering Co. Ltd.</span>
-              <span className="text-slate-600">|</span>
-              <span className="text-slate-400 font-mono">Thailand</span>
-            </div>
-            <div className="flex items-center gap-4">
-              <span className="bg-[#1a1d24] text-ak-cyan border border-ak-cyan/30 px-2.5 py-0.5 rounded font-mono text-xs font-bold flex items-center gap-1.5">
-                <ShieldCheckIcon className="w-3.5 h-3.5 text-ak-cyan" />
-                MSC // ASSISTANT
-              </span>
-              <span className="text-slate-400 flex items-center gap-1.5">
-                <UserIcon className="w-3.5 h-3.5 text-slate-400" />
-                Dev: <strong className="text-white font-bold">Kemuel Avenido</strong>
-              </span>
-            </div>
-          </header>
-
-          {/* Dark Charcoal Main Title Header Bar */}
-          <div className="bg-[#1a1d24] border-b border-[#2d3242] px-6 py-4 w-full text-white shadow-sm flex-shrink-0">
-            <div className="w-full flex flex-wrap justify-between items-center gap-4">
-              <div>
-                <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-3">
-                  <span className="text-ak-cyan">//</span> Fail-Safe Digital Input F-DI 8x24VDC HF
-                  <span className="text-xs font-mono font-bold bg-ak-cyan/10 text-ak-cyan px-3 py-1 rounded border border-ak-cyan/30 flex items-center gap-1.5">
-                    <CpuIcon className="w-3.5 h-3.5 text-ak-cyan" />
-                    6ES7136-6BA01-0CA0
-                  </span>
-                </h1>
-                <p className="text-sm text-slate-300 mt-1">
-                  Siemens ET 200SP Safety Application Selector & Verified Fault Detection Reference
-                </p>
-              </div>
-
-              {/* CLICKABLE GOOGLE DRIVE REFERENCE LINK */}
-              <a
-                href={GDRIVE_MANUAL_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Click to open Google Drive User Manual"
-                className="text-sm font-mono font-bold bg-[#121418] text-ak-cyan hover:text-white hover:border-ak-cyan px-4 py-2 rounded border border-ak-cyan/30 flex items-center gap-2 transition-all shadow-sm group"
-              >
-                <BookOpenIcon className="w-4 h-4 text-ak-cyan group-hover:scale-110 transition-transform" />
-                REF: {cfg.section}
-                <ExternalLinkIcon className="w-3.5 h-3.5 opacity-70 group-hover:opacity-100" />
-              </a>
-            </div>
-          </div>
-
-          {/* Content Body Split Layout (Auto-Expanding / Fluid Height) */}
-          <main className="flex-1 w-full p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <div className="min-h-screen bg-slate-200/80 p-2 sm:p-3 md:p-3 flex justify-center items-start">
+          
+          {/* Centered Bounded View Container */}
+          <div className="w-full max-w-[1580px] bg-[#fdfdfd] border-2 border-slate-300 rounded-xl shadow-xl overflow-hidden flex flex-col">
             
-            {/* LEFT PANEL (7 Cols): Controls, Specs, Warnings, Diagram */}
-            <div className="lg:col-span-7 flex flex-col gap-5">
-              
-              {/* Controls Box */}
-              <AkPanel className="p-5">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 w-full">
-                  <div>
-                    <label className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 block mb-2 flex items-center gap-1.5">
-                      <SlidersIcon className="w-4 h-4 text-ak-cyan-dark" />
-                      Safety Application Mode (Section 4.3)
-                    </label>
-                    <select
-                      value={appKey}
-                      onChange={(e) => handleAppChange(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-300 text-slate-900 text-sm font-semibold rounded-lg p-3 focus:border-ak-cyan focus:outline-none"
-                    >
-                      {Object.values(APP_DATA).map(item => (
-                        <option key={item.id} value={item.id}>{item.title}</option>
-                      ))}
-                    </select>
-                  </div>
+            {/* Header Bar */}
+            <header className="bg-[#121418] border-b border-[#1a1d24] px-5 py-2 flex justify-between items-center text-xs text-slate-400 shadow-md w-full flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <BuildingIcon className="w-4 h-4 text-slate-300" />
+                <span className="font-bold text-white tracking-wide">Labtech Engineering Co. Ltd.</span>
+                <span className="text-slate-600">|</span>
+                <span className="text-slate-400 font-mono">Thailand</span>
+              </div>
+              <div className="flex items-center gap-4">
+                <span className="bg-[#1a1d24] text-white border border-slate-700 px-2.5 py-0.5 rounded font-mono text-xs font-bold flex items-center gap-1.5">
+                  <ShieldCheckIcon className="w-3.5 h-3.5 text-slate-300" />
+                  MSC // ASSISTANT
+                </span>
+                <span className="text-slate-400 flex items-center gap-1.5">
+                  <UserIcon className="w-3.5 h-3.5 text-slate-400" />
+                  Dev: <strong className="text-white font-bold">Kemuel Avenido</strong>
+                </span>
+              </div>
+            </header>
 
-                  <div>
-                    <label className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 block mb-2 flex items-center gap-1.5">
-                      <ZapIcon className="w-4 h-4 text-amber-600" />
-                      Sensor Power Supply Mode
-                    </label>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <button
-                        onClick={() => handleSupplyChange('internal')}
-                        className={`py-2.5 text-xs sm:text-sm font-bold uppercase tracking-wider rounded-lg border transition-all flex items-center justify-center gap-1.5 ${
-                          supplyMode === 'internal'
-                            ? 'bg-ak-cyan text-slate-950 border-ak-cyan shadow-md'
-                            : 'bg-slate-50 text-slate-600 border-slate-300 hover:text-slate-900 hover:bg-slate-100'
-                        }`}
-                      >
-                        <ZapIcon className="w-4 h-4" />
-                        Internal (VSn)
-                      </button>
-                      <button
-                        disabled={!cfg.allowExt}
-                        onClick={() => handleSupplyChange('external')}
-                        className={`py-2.5 text-xs sm:text-sm font-bold uppercase tracking-wider rounded-lg border transition-all flex items-center justify-center gap-1.5 ${
-                          supplyMode === 'external'
-                            ? 'bg-ak-cyan text-slate-950 border-ak-cyan shadow-md'
-                            : !cfg.allowExt
-                            ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed opacity-50'
-                            : 'bg-slate-50 text-slate-600 border-slate-300 hover:text-slate-900 hover:bg-slate-100'
-                        }`}
-                      >
-                        <ZapIcon className="w-4 h-4" />
-                        External 24V
-                      </button>
-                    </div>
-                  </div>
+            {/* Title Bar */}
+            <div className="bg-[#1a1d24] border-b border-[#2d3242] px-5 py-3 w-full text-white shadow-sm flex-shrink-0">
+              <div className="w-full flex flex-wrap justify-between items-center gap-4">
+                <div>
+                  <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-3">
+                    <span>//</span> Fail-Safe Digital Input F-DI 8x24VDC HF
+                    <DeviceTag code="6ES7136-6BA01-0CA0" />
+                  </h1>
+                  <p className="text-xs sm:text-sm text-slate-300 mt-0.5">
+                    Siemens ET 200SP Safety Application Selector & Verified Fault Detection Reference
+                  </p>
                 </div>
-              </AkPanel>
 
-              {/* Spec Badges Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-                <AkPanel className="p-3.5 flex flex-col justify-center">
-                  <div className="flex items-center justify-between mb-0.5">
-                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Safety Rating</span>
-                    <ShieldCheckIcon className="w-4 h-4 text-slate-700" />
-                  </div>
-                  <strong className="text-sm sm:text-base font-extrabold text-[#0f172a] block">{cfg.safety}</strong>
-                </AkPanel>
-                
-                {/* HOVERABLE EVALUATION CARD WITH MOON TOOLTIP */}
-                <div className="relative group h-full">
-                  <AkPanel className="p-3.5 flex flex-col justify-center h-full cursor-help hover:border-ak-cyan">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Evaluation</span>
-                      <InfoIcon className="w-4 h-4 text-ak-cyan-dark" />
-                    </div>
-                    <strong className="text-xs sm:text-sm font-bold text-slate-800 block">{cfg.eval}</strong>
-                  </AkPanel>
-
-                  {/* Evaluation Tooltip Box */}
-                  <div className="absolute left-0 bottom-full mb-2 w-80 sm:w-96 p-4 bg-[#121418] text-white rounded-lg border border-ak-cyan shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none text-xs sm:text-sm">
-                    <div className="flex items-center justify-between mb-2 border-b border-slate-700 pb-1.5">
-                      <span className="font-mono font-bold text-ak-cyan text-xs sm:text-sm flex items-center gap-1.5">
-                        <LayersIcon className="w-4 h-4 text-ak-cyan" />
-                        // MOON ARCHITECTURE EXPLANATION
-                      </span>
-                      <span className="text-xs text-slate-400 font-mono">ISO 13849-1</span>
-                    </div>
-                    <p className="text-slate-300 text-xs sm:text-sm leading-relaxed mb-2">
-                      {cfg.evalTooltip}
-                    </p>
-                    <div className="bg-slate-800/90 p-2.5 rounded border border-slate-700 text-xs text-slate-300">
-                      <strong className="text-ak-cyan font-semibold block mb-0.5">What "MooN" Means:</strong>
-                      "M out of N" means <span className="text-white font-semibold">M</span> channels out of <span className="text-white font-semibold">N</span> total channels must function correctly to maintain safety operation.
-                    </div>
-                  </div>
-                </div>
-                
-                {/* CLICKABLE MANUAL REF CARD */}
+                {/* Manual Link */}
                 <a
                   href={GDRIVE_MANUAL_URL}
                   target="_blank"
                   rel="noopener noreferrer"
                   title="Click to open Google Drive User Manual"
-                  className="block h-full group"
+                  className="text-xs sm:text-sm font-mono font-bold bg-[#121418] text-white hover:text-ak-cyan hover:border-ak-cyan px-3.5 py-1.5 rounded border border-slate-700 flex items-center gap-2 transition-all shadow-sm group"
                 >
-                  <AkPanel className="p-3.5 flex flex-col justify-center h-full group-hover:border-ak-cyan transition-colors">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Manual Ref.</span>
-                      <ExternalLinkIcon className="w-3.5 h-3.5 text-slate-400 group-hover:text-ak-cyan-dark transition-colors" />
-                    </div>
-                    <strong className="text-xs sm:text-sm font-bold text-ak-cyan-dark group-hover:underline block">{cfg.section}</strong>
-                  </AkPanel>
+                  <BookOpenIcon className="w-4 h-4 text-slate-300 group-hover:scale-110 transition-transform" />
+                  REF: {cfg.section}
+                  <ExternalLinkIcon className="w-3.5 h-3.5 opacity-70 group-hover:opacity-100" />
                 </a>
-
-                {/* HOVERABLE SHORT-CIRCUIT RULE CARD WITH TOOLTIP */}
-                <div className="relative group h-full">
-                  <AkPanel className="p-3.5 flex flex-col justify-center h-full cursor-help hover:border-ak-cyan">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Short-Circuit Rule</span>
-                      <InfoIcon className="w-4 h-4 text-ak-cyan-dark" />
-                    </div>
-                    <strong className="text-xs sm:text-sm font-extrabold block mt-0.5 leading-tight text-[#C00000]">
-                      {cfg.scRule}
-                    </strong>
-                  </AkPanel>
-
-                  {/* Cyan Tooltip Box */}
-                  <div className="absolute left-0 bottom-full mb-2 w-80 sm:w-96 p-4 bg-[#121418] text-white rounded-lg border border-ak-cyan shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none text-xs sm:text-sm">
-                    <div className="flex items-center justify-between mb-2 border-b border-slate-700 pb-1.5">
-                      <span className="font-mono font-bold text-ak-cyan text-xs sm:text-sm flex items-center gap-1.5">
-                        <TerminalIcon className="w-4 h-4 text-ak-cyan" />
-                        // SHORT-CIRCUIT TEST EXPLANATION
-                      </span>
-                      <span className="text-xs text-slate-400 font-mono">EN 61131-2</span>
-                    </div>
-                    <p className="text-slate-300 text-xs sm:text-sm leading-relaxed mb-2">
-                      {cfg.scTooltip}
-                    </p>
-                    <div className="bg-slate-800/90 p-2.5 rounded border border-slate-700 text-xs text-slate-300">
-                      <strong className="text-ak-cyan font-semibold block mb-0.5 flex items-center gap-1">
-                        <ZapIcon className="w-3.5 h-3.5 text-ak-cyan" />
-                        How it works:
-                      </strong>
-                      The PLC briefly turns off 24V supply outputs (&lt;1ms) to verify that signal pulses return as expected without crosstalk or short circuits.
-                    </div>
-                  </div>
-                </div>
               </div>
-
-              {/* Warning Banner */}
-              <AkPanel className="p-4 bg-amber-50/90 border-amber-300 text-amber-950 text-sm flex gap-3.5 items-start">
-                <AlertTriangleIcon className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <strong className="block text-xs sm:text-sm uppercase tracking-wide text-amber-900 font-bold mb-1">
-                    Mandatory Manual Condition (Section 4.3)
-                  </strong>
-                  <span className="text-xs sm:text-sm leading-relaxed">{cfg.warning}</span>
-                </div>
-              </AkPanel>
-
-              {/* Vector SVG Wiring Diagram Panel */}
-              <AkPanel className="p-5 flex flex-col gap-4">
-                <div className="flex justify-between items-center flex-wrap gap-2">
-                  <div className="flex items-center gap-2.5">
-                    <ActivityIcon className="w-5 h-5 text-ak-cyan-dark" />
-                    <span className="text-sm sm:text-base font-bold text-slate-900">Schematic Wiring Diagram</span>
-                    <span className="text-xs font-mono bg-slate-100 text-ak-cyan-dark px-2.5 py-1 rounded border border-slate-200 font-bold">
-                      {supplyMode === 'internal' ? cfg.figInt : cfg.figExt}
-                    </span>
-                  </div>
-                  
-                  {/* Animation Toggle */}
-                  <button
-                    onClick={() => setAnimate(!animate)}
-                    className="flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-700 hover:text-slate-900 bg-slate-100 px-3 py-1.5 rounded-md border border-slate-300 transition-all"
-                  >
-                    <span className={`w-2.5 h-2.5 rounded-full ${animate ? 'bg-emerald-600 animate-pulse' : 'bg-slate-400'}`}></span>
-                    {animate ? 'Signal Flow Active' : 'Static View'}
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-center w-full">
-                  <SvgWiringDiagram appKey={appKey} supplyMode={supplyMode} animate={animate} />
-                </div>
-
-                {/* Wire Legend */}
-                <div className="flex flex-wrap gap-5 text-xs sm:text-sm font-medium text-slate-600 pt-2 border-t border-slate-200">
-                  <span className="flex items-center gap-2">
-                    <span className="w-4 h-1.5 bg-sky-600 rounded-full"></span> F-DI Channel Inputs (DI)
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <span className="w-4 h-1.5 bg-amber-600 rounded-full"></span> Internal VSn Supply (Test Pulses)
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <span className="w-4 h-1.5 bg-red-600 rounded-full"></span> External +24V DC Supply
-                  </span>
-                </div>
-              </AkPanel>
-
             </div>
 
-            {/* RIGHT PANEL (5 Cols): Diagnostic Fault Table & STEP 7 Parameters */}
-            <div className="lg:col-span-5 flex flex-col gap-5">
-
-              {/* STEP 7 Hardware Configuration Summary Panel */}
-              <AkPanel className="p-5">
-                <div className="text-xs sm:text-sm font-bold text-slate-900 uppercase tracking-wider mb-3 flex justify-between items-center">
-                  <span className="flex items-center gap-2">
-                    <CpuIcon className="w-4 h-4 text-ak-cyan-dark" />
-                    TIA Portal Hardware Configuration
-                  </span>
-                  <span className="text-xs text-ak-cyan-dark bg-sky-50 px-2.5 py-1 rounded font-mono border border-sky-200 font-bold">F-DI Parameters</span>
-                </div>
-                <div className="grid grid-cols-3 gap-2.5 text-xs sm:text-sm">
-                  <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                    <span className="text-xs text-slate-500 block font-semibold">Sensor Evaluation</span>
-                    <strong className="text-slate-900 text-xs sm:text-sm leading-snug block mt-1 font-bold">{cfg.params.eval}</strong>
-                  </div>
-                  <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                    <span className="text-xs text-slate-500 block font-semibold">Sensor Supply</span>
-                    <strong className="text-slate-900 text-xs sm:text-sm leading-snug block mt-1 font-bold">{cfg.params.supply}</strong>
-                  </div>
-                  <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
-                    <span className="text-xs text-slate-500 block font-semibold">Short-Circuit Test</span>
-                    <strong className="text-slate-900 text-xs sm:text-sm leading-snug block mt-1 font-bold">{cfg.params.scTest}</strong>
-                  </div>
-                </div>
-              </AkPanel>
-
-              {/* Verified Diagnostic Fault Detection Matrix Table Panel */}
-              <AkPanel className="p-5 flex flex-col">
-                <div className="flex justify-between items-center mb-3">
-                  <div className="flex items-center gap-2">
-                    <TerminalIcon className="w-5 h-5 text-ak-cyan-dark" />
+            {/* Main Content Layout */}
+            <main className="flex-1 w-full p-4 sm:p-5 grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              
+              {/* Left Column */}
+              <div className="lg:col-span-7 flex flex-col gap-4">
+                
+                {/* Controls */}
+                <AkPanel className="p-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
                     <div>
-                      <h3 className="text-sm sm:text-base font-bold text-slate-900 uppercase tracking-wider">
-                        Diagnostic Fault Detection Matrix
-                      </h3>
-                      <p className="text-xs text-slate-500">Verified according to Siemens Manual {cfg.tableRef}</p>
+                      <label className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 block mb-1.5 flex items-center gap-1.5">
+                        <SlidersIcon className="w-4 h-4 text-slate-800" />
+                        Safety Application Mode (Section 4.3)
+                      </label>
+                      <select
+                        value={appKey}
+                        onChange={(e) => handleAppChange(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 text-slate-900 text-sm font-semibold rounded-lg p-2.5 focus:border-ak-cyan focus:outline-none"
+                      >
+                        {Object.values(APP_DATA).map(item => (
+                          <option key={item.id} value={item.id}>{item.title}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 block mb-1.5 flex items-center gap-1.5">
+                        <ZapIcon className="w-4 h-4 text-amber-600" />
+                        Sensor Power Supply Mode
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => handleSupplyChange('internal')}
+                          className={`py-2 text-xs sm:text-sm font-bold uppercase tracking-wider rounded-lg border transition-all flex items-center justify-center gap-1.5 ${
+                            supplyMode === 'internal'
+                              ? 'bg-slate-900 text-white border-slate-900 shadow-md'
+                              : 'bg-slate-50 text-slate-700 border-slate-300 hover:text-slate-900 hover:bg-slate-100'
+                          }`}
+                        >
+                          <ZapIcon className="w-4 h-4" />
+                          Internal (VSn)
+                        </button>
+                        <button
+                          disabled={!cfg.allowExt}
+                          onClick={() => handleSupplyChange('external')}
+                          className={`py-2 text-xs sm:text-sm font-bold uppercase tracking-wider rounded-lg border transition-all flex items-center justify-center gap-1.5 ${
+                            supplyMode === 'external'
+                              ? 'bg-slate-900 text-white border-slate-900 shadow-md'
+                              : !cfg.allowExt
+                              ? 'bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed opacity-50'
+                              : 'bg-slate-50 text-slate-700 border-slate-300 hover:text-slate-900 hover:bg-slate-100'
+                          }`}
+                        >
+                          <ZapIcon className="w-4 h-4" />
+                          External 24V
+                        </button>
+                      </div>
                     </div>
                   </div>
+                </AkPanel>
+
+                {/* Info Cards Grid (3 Cards) */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   
-                  {/* CLICKABLE TABLE BADGE LINK */}
-                  <a
-                    href={GDRIVE_MANUAL_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title={`Click to open ${cfg.tableRef} in Google Drive User Manual`}
-                    className="text-xs font-mono font-bold bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 px-3 py-1 rounded border border-emerald-300 flex items-center gap-1.5 transition-all group shadow-sm"
-                  >
-                    <span>{cfg.tableRef} (p. {cfg.tablePage})</span>
-                    <ExternalLinkIcon className="w-3.5 h-3.5 text-emerald-700 group-hover:scale-110 transition-transform" />
-                  </a>
-                </div>
+                  {/* Card 1: Safety Rating */}
+                  <AkPanel className="p-3 text-center flex flex-col items-center justify-center">
+                    <div className="flex items-center justify-center gap-1 mb-1">
+                      <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block text-center">Safety Rating</span>
+                      <ShieldCheckIcon className="w-3.5 h-3.5 text-slate-800" />
+                    </div>
+                    <strong className="text-sm sm:text-base font-extrabold text-slate-900 block text-center">{cfg.safety}</strong>
+                  </AkPanel>
+                  
+                  {/* Card 2: Evaluation */}
+                  <div className="relative group/infoCard h-full">
+                    <AkPanel className="p-3 text-center flex flex-col items-center justify-center h-full cursor-help hover:border-ak-cyan">
+                      <div className="flex items-center justify-center gap-1 mb-1">
+                        <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block text-center">Evaluation</span>
+                        <InfoIcon className="w-3.5 h-3.5 text-slate-800" />
+                      </div>
+                      <strong className="text-xs sm:text-sm font-bold text-slate-900 block text-center">{cfg.eval}</strong>
+                    </AkPanel>
 
-                {/* Table Container */}
-                <div className="overflow-x-auto custom-scrollbar border border-slate-200 rounded-lg">
-                  <table className="w-full text-xs sm:text-sm text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-100 text-slate-800 border-b border-slate-300">
-                        <th className="p-3 font-bold uppercase text-xs tracking-wider w-[42%] bg-slate-100">
-                          Fault Description <span className="text-ak-cyan-dark font-normal lowercase block sm:inline">(hover row for info)</span>
-                        </th>
-                        <th className="p-2.5 font-bold uppercase text-xs tracking-wider text-center w-[19%] bg-slate-100">Int VSn (Test ON)</th>
-                        <th className="p-2.5 font-bold uppercase text-xs tracking-wider text-center w-[19%] bg-slate-100">Int VSn (Test OFF)</th>
-                        <th className="p-2.5 font-bold uppercase text-xs tracking-wider text-center w-[20%] bg-slate-100">Ext 24V Supply</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 bg-white">
-                      {cfg.faults.map((f, i) => (
-                        <tr 
-                          key={i} 
-                          onMouseEnter={() => setHoveredFault(f)}
-                          onMouseLeave={() => setHoveredFault(null)}
-                          className="hover:bg-sky-50/80 transition-colors cursor-help"
-                        >
-                          <td className="p-3 font-semibold text-slate-900 text-xs sm:text-sm leading-snug">
-                            <div className="flex items-center justify-between gap-1">
-                              <span>{f.name}</span>
-                              <InfoIcon className="w-3.5 h-3.5 text-ak-cyan-dark flex-shrink-0" />
-                            </div>
-                          </td>
-                          <td className="p-2 text-center">
-                            <StatusBadge value={f.intOn} />
-                          </td>
-                          <td className="p-2 text-center">
-                            <StatusBadge value={f.intOff} />
-                          </td>
-                          <td className="p-2 text-center">
-                            <StatusBadge value={f.ext} />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* STATIC HEADER LIGHT THEMATIC DIAGNOSTIC ANALYSIS HOVER CARD */}
-                <div className="mt-4 p-4 bg-slate-50 text-slate-900 rounded-lg border border-ak-cyan/40 text-xs sm:text-sm shadow-sm transition-all duration-200">
-                  {hoveredFault ? (
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                        <span className="font-mono font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
-                          <TerminalIcon className="w-4 h-4 text-ak-cyan-dark" />
-                          // FAULT DIAGNOSTIC ANALYSIS
+                    <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-80 p-3.5 bg-[#121418] text-white rounded-lg border border-slate-700 shadow-xl opacity-0 invisible group-hover/infoCard:opacity-100 group-hover/infoCard:visible transition-all duration-200 z-[100] pointer-events-none text-xs">
+                      <div className="flex items-center justify-between mb-1.5 border-b border-slate-700 pb-1">
+                        <span className="font-mono font-bold text-slate-200 text-xs flex items-center gap-1.5">
+                          <LayersIcon className="w-3.5 h-3.5 text-ak-cyan" />
+                          // MOON ARCHITECTURE
                         </span>
-                        <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
-                          DIAGNOSTIC ACTIVE
+                        <span className="text-[10px] text-slate-400 font-mono">ISO 13849-1</span>
+                      </div>
+                      <p className="text-slate-300 text-xs leading-relaxed mb-2 text-left">
+                        {cfg.evalTooltip}
+                      </p>
+                      <div className="bg-slate-800 p-2 rounded border border-slate-700 text-xs text-slate-300 text-left">
+                        <strong className="text-white font-semibold block mb-0.5">What "MooN" Means:</strong>
+                        "M out of N" channels must function correctly to maintain safety operation.
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Short-Circuit Test (SCT) */}
+                  <div className="relative group/scRule h-full">
+                    <AkPanel className="p-3 text-center flex flex-col items-center justify-center h-full cursor-help hover:border-ak-cyan">
+                      <div className="flex items-center justify-center gap-1 mb-0.5">
+                        <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block text-center">Short-Circuit Test (SCT)</span>
+                        <InfoIcon className="w-3.5 h-3.5 text-slate-800" />
+                      </div>
+                      <strong className="text-xs font-extrabold block text-center leading-tight text-[#C00000]">
+                        {dynamicSctRule}
+                      </strong>
+                    </AkPanel>
+
+                    <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-80 p-3.5 bg-[#121418] text-white rounded-lg border border-slate-700 shadow-xl opacity-0 invisible group-hover/scRule:opacity-100 group-hover/scRule:visible transition-all duration-200 z-[100] pointer-events-none text-xs">
+                      <div className="flex items-center justify-between mb-1.5 border-b border-slate-700 pb-1">
+                        <span className="font-mono font-bold text-slate-200 text-xs flex items-center gap-1.5">
+                          <TerminalIcon className="w-3.5 h-3.5 text-ak-cyan" />
+                          // SHORT-CIRCUIT TEST (SCT)
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">EN 61131-2</span>
+                      </div>
+                      <p className="text-slate-300 text-xs leading-relaxed mb-2 text-left">
+                        {cfg.scTooltip}
+                      </p>
+                      <div className="bg-slate-800 p-2 rounded border border-slate-700 text-xs text-slate-300 text-left">
+                        <strong className="text-white font-semibold block mb-0.5 flex items-center gap-1">
+                          <ZapIcon className="w-3 h-3 text-ak-cyan" />
+                          How it works:
+                        </strong>
+                        The PLC briefly turns off 24V supply outputs (&lt;1ms) to verify signal pulses without crosstalk.
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Mandatory Manual Condition Card */}
+                <div className="relative group/warnCard">
+                  <AkPanel className="p-3.5 bg-amber-50/90 border-amber-300 text-amber-950 text-sm flex items-start gap-3 cursor-help">
+                    <AlertTriangleIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                        <strong className="text-xs sm:text-sm uppercase tracking-wide text-amber-900 font-bold">
+                          Mandatory Manual Condition ({cfg.section})
+                        </strong>
+                        <span className="w-5 h-5 rounded-full bg-amber-200/90 text-amber-900 border border-amber-400 flex items-center justify-center font-bold text-xs shadow-sm cursor-help hover:bg-amber-300">
+                          ?
                         </span>
                       </div>
-                      <p className="text-slate-800 text-xs sm:text-sm leading-relaxed">
-                        <strong className="text-amber-700 font-bold">Target Fault: </strong>{hoveredFault.name}
-                      </p>
-                      <p className="text-slate-800 text-xs sm:text-sm leading-relaxed">
-                        <strong className="text-amber-700 font-bold">Possible Cause: </strong>{hoveredFault.cause}
-                      </p>
-                      <p className="text-slate-800 text-xs sm:text-sm leading-relaxed">
-                        <strong className="text-sky-700 font-bold">Safety Consequence: </strong>{hoveredFault.consequence}
-                      </p>
-                      <p className="text-slate-800 text-xs sm:text-sm leading-relaxed bg-white p-2.5 rounded border border-slate-200">
-                        <strong className="text-purple-700 font-bold">Real-World Industrial Example: </strong>{hoveredFault.example}
-                      </p>
+                      <span className="text-xs sm:text-sm leading-relaxed block">{cfg.warning}</span>
                     </div>
-                  ) : (
-                    <div className="flex items-center justify-center text-center text-slate-500 text-xs sm:text-sm font-medium gap-2 py-2">
-                      <InfoIcon className="w-5 h-5 text-ak-cyan-dark flex-shrink-0" />
-                      <span>Hover over any fault description row above to inspect root causes, PLC responses, and real-world industrial examples.</span>
+                  </AkPanel>
+
+                  {/* HOVER-ON POPUP OVERLAY */}
+                  <div className="absolute left-0 bottom-full mb-2 w-full p-4 bg-[#121418] text-white rounded-lg border border-amber-400 shadow-2xl opacity-0 invisible group-hover/warnCard:opacity-100 group-hover/warnCard:visible transition-all duration-200 z-[100] pointer-events-none text-xs">
+                    <div className="flex items-center justify-between border-b border-slate-700 pb-2 mb-2.5">
+                      <span className="font-mono font-bold text-amber-400 text-xs flex items-center gap-2">
+                        <AlertTriangleIcon className="w-4 h-4 text-amber-400" />
+                        // MANDATORY SAFETY REQUIREMENTS BREAKDOWN
+                      </span>
+                      <span className="text-[10px] font-mono text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-700">
+                        {cfg.section}
+                      </span>
                     </div>
-                  )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      {cfg.subWarnings && cfg.subWarnings.map((sub, sIdx) => (
+                        <div key={sIdx} className="bg-slate-800/90 p-2.5 rounded border border-slate-700 text-left">
+                          <strong className="text-amber-300 font-bold block mb-1 text-[11px]">// {sub.title}</strong>
+                          <p className="text-slate-300 leading-normal text-[11px]">{sub.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
-                <p className="text-xs text-slate-500 italic mt-3 pt-2 border-t border-slate-200 leading-relaxed">
-                  {cfg.note}
-                </p>
-              </AkPanel>
+                {/* Vector SVG Wiring Diagram Panel */}
+                <AkPanel className="p-4 flex flex-col gap-3">
+                  <div className="flex justify-between items-center flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <ActivityIcon className="w-4 h-4 text-slate-800" />
+                      <span className="text-sm font-bold text-slate-900">Schematic Wiring Diagram</span>
+                      <span className="text-xs font-mono bg-slate-100 text-slate-800 px-2.5 py-0.5 rounded border border-slate-300 font-bold">
+                        {supplyMode === 'internal' ? cfg.figInt : cfg.figExt}
+                      </span>
+                    </div>
+                    
+                    {/* Signal Flow Toggle Buttons */}
+                    <button
+                      onClick={() => setAnimate(!animate)}
+                      className="flex items-center gap-2 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-300 transition-all"
+                    >
+                      <span className={`w-2 h-2 rounded-full ${animate ? 'bg-emerald-600 animate-pulse' : 'bg-slate-400'}`}></span>
+                      {animate ? 'Signal Flow Active' : 'Signal Flow Static'}
+                    </button>
+                  </div>
 
-            </div>
+                  <div className="flex items-center justify-center w-full">
+                    <SvgWiringDiagram appKey={appKey} supplyMode={supplyMode} animate={animate} />
+                  </div>
 
-          </main>
+                  {/* Wire Legend */}
+                  <div className="flex flex-wrap gap-4 text-xs font-medium text-slate-700 pt-2 border-t border-slate-200">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3.5 h-1.5 bg-sky-600 rounded-full"></span> F-DI Channel Inputs (DI)
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3.5 h-1.5 bg-amber-600 rounded-full"></span> Internal VSn Supply (Test Pulses)
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3.5 h-1.5 bg-red-600 rounded-full"></span> External +24V DC Supply
+                    </span>
+                  </div>
+                </AkPanel>
+
+              </div>
+
+              {/* Right Column */}
+              <div className="lg:col-span-5 flex flex-col gap-4">
+
+                {/* STEP 7 Hardware Configuration Summary Panel */}
+                <AkPanel className="p-4">
+                  <div className="text-xs sm:text-sm font-bold text-slate-900 uppercase tracking-wider mb-2.5 flex justify-between items-center">
+                    <span className="flex items-center gap-2">
+                      <CpuIcon className="w-4 h-4 text-slate-800" />
+                      TIA Portal Hardware Configuration
+                    </span>
+                    <span className="text-xs text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded font-mono border border-slate-300 font-bold">F-DI Parameters</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div className="bg-slate-50 p-2 rounded-lg border border-slate-200">
+                      <span className="text-slate-500 block font-semibold text-[11px]">Sensor Evaluation</span>
+                      <strong className="text-slate-900 text-xs leading-snug block mt-0.5 font-bold">{cfg.params.eval}</strong>
+                    </div>
+                    <div className="bg-slate-50 p-2 rounded-lg border border-slate-200">
+                      <span className="text-slate-500 block font-semibold text-[11px]">Sensor Supply</span>
+                      <strong className="text-slate-900 text-xs leading-snug block mt-0.5 font-bold">{displaySensorSupplyText}</strong>
+                    </div>
+                    <div className="bg-slate-50 p-2 rounded-lg border border-slate-200">
+                      <span className="text-slate-500 block font-semibold text-[11px]">Short-Circuit Test</span>
+                      <strong className="text-slate-900 text-xs leading-snug block mt-0.5 font-bold">{dynamicSctRule}</strong>
+                    </div>
+                  </div>
+                </AkPanel>
+
+                {/* Diagnostic Fault Detection Matrix Table */}
+                <AkPanel className="p-4 flex flex-col">
+                  <div className="flex justify-between items-center mb-2.5">
+                    <div className="flex items-center gap-2">
+                      <TerminalIcon className="w-4 h-4 text-slate-800" />
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                          Diagnostic Fault Detection Matrix
+                        </h3>
+                        <p className="text-[11px] text-slate-500">Verified according to Siemens Manual {cfg.tableRef}</p>
+                      </div>
+                    </div>
+                    
+                    <a
+                      href={GDRIVE_MANUAL_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`Click to open ${cfg.tableRef} in Google Drive User Manual`}
+                      className="text-xs font-mono font-bold bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 px-2.5 py-1 rounded border border-emerald-300 flex items-center gap-1 transition-all group shadow-sm"
+                    >
+                      <span>{cfg.tableRef} (p. {cfg.tablePage})</span>
+                      <ExternalLinkIcon className="w-3 h-3 text-emerald-700 group-hover:scale-110 transition-transform" />
+                    </a>
+                  </div>
+
+                  {/* Fault Table with Unclipped Hover Popups */}
+                  <div className="overflow-visible border border-slate-200 rounded-lg">
+                    <table className="w-full text-xs text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-800 border-b border-slate-300 font-bold uppercase text-[11px]">
+                          <th className="p-2.5 w-[38%]">Fault Description</th>
+                          <th className="p-2 text-center w-[18%]">Int VSn (SCT ON)</th>
+                          <th className="p-2 text-center w-[18%]">Int VSn (SCT OFF)</th>
+                          <th className="p-2 text-center w-[14%]">Ext 24V</th>
+                          <th className="p-2 text-center w-[12%]">Simulate</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 bg-white">
+                        {cfg.faults.map((f, i) => {
+                          const isTopRow = i < 3;
+                          return (
+                            <tr 
+                              key={i} 
+                              className="hover:bg-slate-100/80 transition-colors group/faultRow relative"
+                            >
+                              <td className="p-2.5 font-semibold text-slate-900 leading-snug">
+                                <div className="flex items-center justify-between gap-1 relative group/infoIcon">
+                                  <span>{f.name}</span>
+                                  <InfoIcon className="w-3.5 h-3.5 text-slate-500 group-hover/infoIcon:text-slate-900 cursor-help flex-shrink-0" />
+
+                                  {/* UNCLIPPED HOVER POPUP TOOLTIP */}
+                                  <div className={`absolute left-0 ${isTopRow ? 'top-full mt-2' : 'bottom-full mb-2'} w-80 sm:w-96 p-4 bg-[#121418] text-white rounded-lg border border-slate-700 shadow-2xl opacity-0 invisible group-hover/infoIcon:opacity-100 group-hover/infoIcon:visible transition-all duration-200 z-[100] pointer-events-none text-xs`}>
+                                    <div className="flex items-center justify-between border-b border-slate-700 pb-1.5 mb-2">
+                                      <span className="font-mono font-bold text-white text-xs flex items-center gap-1.5">
+                                        <TerminalIcon className="w-3.5 h-3.5 text-ak-cyan" />
+                                        // FAULT DIAGNOSTIC ANALYSIS
+                                      </span>
+                                      <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800 font-bold">
+                                        CODE: {f.diagCode}
+                                      </span>
+                                    </div>
+                                    
+                                    <div className="flex flex-col gap-2 text-left">
+                                      <p className="text-slate-200 leading-relaxed">
+                                        <strong className="text-amber-400 font-bold block mb-0.5">Target Fault:</strong>
+                                        {f.name}
+                                      </p>
+                                      <p className="text-slate-300 leading-relaxed">
+                                        <strong className="text-amber-300 font-bold block mb-0.5">Possible Root Cause:</strong>
+                                        {f.cause}
+                                      </p>
+                                      <p className="text-slate-300 leading-relaxed">
+                                        <strong className="text-sky-300 font-bold block mb-0.5">Diagnostic Message:</strong>
+                                        {f.diagMsg} ({f.consequence})
+                                      </p>
+                                      <div className="bg-slate-900 p-2.5 rounded border border-slate-700">
+                                        <strong className="text-emerald-400 font-bold block mb-0.5">Safety Function Outcome:</strong>
+                                        <span className="text-slate-200">{f.safetyOutcome}</span>
+                                      </div>
+                                      <div className="bg-slate-800/90 p-2.5 rounded border border-slate-700">
+                                        <strong className="text-purple-300 font-bold block mb-0.5">Real-World Industrial Example:</strong>
+                                        <span className="text-slate-300">{f.example}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                </div>
+                              </td>
+                              <td className="p-1.5 text-center">
+                                <StatusBadge value={f.intOn} />
+                              </td>
+                              <td className="p-1.5 text-center">
+                                <StatusBadge value={f.intOff} />
+                              </td>
+                              <td className="p-1.5 text-center">
+                                <StatusBadge value={f.ext} />
+                              </td>
+                              <td className="p-1.5 text-center">
+                                <button
+                                  onClick={() => handleOpenSimulation(f)}
+                                  className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-mono font-bold text-[10px] tracking-wider transition-all flex items-center justify-center gap-1 mx-auto shadow-sm"
+                                  title="Run step-by-step PLC Safety Simulation"
+                                >
+                                  <PlayIcon className="w-2.5 h-2.5 text-ak-cyan" />
+                                  Sim
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 italic mt-2.5 pt-2 border-t border-slate-200 leading-relaxed">
+                    Hover over any fault description row or info icon to inspect root causes, PLC responses, and safety outcomes. Click "Sim" to run an interactive step-by-step PLC fault evaluation simulator.
+                  </p>
+                </AkPanel>
+
+              </div>
+
+            </main>
+          </div>
+
+          {/* OVERHAULED SIMULATION MODAL TOOL */}
+          <SimulationModal 
+            appKey={appKey}
+            supplyMode={supplyMode}
+            fault={simulatedFault} 
+            appTitle={cfg.title} 
+            onClose={() => setSimulatedFault(null)} 
+          />
+
         </div>
       );
     };
 
-    // Status Pill Component with UI Symbols
+    // Status Pill Component
     const StatusBadge = ({ value }) => {
       if (value.startsWith('Yes')) {
         return (
-          <span className="inline-flex items-center justify-center gap-1 px-2 py-0.5 text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-300 rounded">
-            <CheckCircleIcon className="w-3.5 h-3.5 text-emerald-700" />
+          <span className="inline-flex items-center justify-center gap-0.5 px-1.5 py-0.5 text-[11px] font-bold text-emerald-900 bg-emerald-100 border border-emerald-300 rounded">
+            <CheckCircleIcon className="w-3 h-3 text-emerald-700" />
             {value}
           </span>
         );
       }
       if (value.startsWith('No')) {
         return (
-          <span className="inline-flex items-center justify-center gap-1 px-2 py-0.5 text-xs font-bold text-rose-800 bg-rose-50 border border-rose-300 rounded">
-            <XCircleIcon className="w-3.5 h-3.5 text-rose-700" />
+          <span className="inline-flex items-center justify-center gap-0.5 px-1.5 py-0.5 text-[11px] font-bold text-rose-900 bg-rose-100 border border-rose-300 rounded">
+            <XCircleIcon className="w-3 h-3 text-rose-700" />
             {value}
           </span>
         );
       }
       return (
-        <span className="inline-flex items-center justify-center gap-1 px-2 py-0.5 text-xs font-medium text-slate-500 bg-slate-100 rounded">
-          <MinusCircleIcon className="w-3.5 h-3.5 text-slate-400" />
+        <span className="inline-flex items-center justify-center gap-0.5 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 bg-slate-100 rounded">
+          <MinusCircleIcon className="w-3 h-3 text-slate-400" />
           {value}
         </span>
       );
     };
 
-    // Render React App
+    // Render App
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
